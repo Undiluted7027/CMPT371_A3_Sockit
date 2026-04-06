@@ -1,0 +1,69 @@
+{
+    "python.analysis.extraPaths": [
+        "src"
+    ],
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.typeCheckingMode": "standard",
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": true,
+    "editor.formatOnSave": true,
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    },
+    "ruff.enable": true,
+    "ruff.lint.enable": true,
+    "ruff.lint.select": [
+        "E",
+        "W",
+        "I",
+        "UP",
+        "B",
+        "SIM",
+        "TCH",
+        "D"
+    ],
+    "ruff.lint.ignore": [
+        "E501"
+    ],
+    "ruff.fixAll": true,
+    "mypy-type-checker.importStrategy": "fromEnvironment",
+    "mypy-type-checker.interpreter": [
+        ".venv/bin/python"
+    ],
+    "mypy-type-checker.args": [
+        "--ignore-missing-imports",
+        "--follow-imports=silent",
+        "--show-column-numbers",
+        "--disallow-untyped-defs",
+        "--disallow-untyped-calls",
+        "--warn-return-any",
+        "--warn-unused-configs",
+        "--no-implicit-optional",
+        "--pretty"
+    ],
+    "editor.rulers": [
+        100
+    ],
+    "editor.wordWrap": "on",
+    "editor.tabSize": 4,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/.mypy_cache": true,
+        "**/.ruff_cache": true,
+        "**/.pytest_cache": true
+    }
+}

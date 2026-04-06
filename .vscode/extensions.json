@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "ms-python.python", // Python language support
+    "charliermarsh.ruff", // Ruff linter + formatter
+    "ms-python.mypy-type-checker", // mypy type checking
+    "tamasfe.even-better-toml", // TOML syntax + validation
+    "redhat.vscode-yaml", // YAML syntax (pre-commit config)
+    "ms-python.vscode-python-envs", // Python Environment manager
+    "fill-labs.dependi", // Dependency security check
+    "ms-vscode.makefile-tools" // Makefile tools
+  ]
+}

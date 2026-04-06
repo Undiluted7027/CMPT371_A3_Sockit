@@ -1,0 +1,16 @@
+# ---------------------------------------------------------------------------
+# Sockit — Python dependencies
+# ---------------------------------------------------------------------------
+# All runtime dependencies are Python standard library modules:
+#   socket, threading, tkinter, json, time, argparse, uuid
+#
+# No third-party packages are required to run the application.
+# ---------------------------------------------------------------------------
+# Testing only:
+pytest>=9.0.2,<10.0.0
+
+# Development DX only:
+ruff>=0.15.9
+mypy>=1.20.0,<2.0.0
+mypy-extensions>=1.1.0,<2.0.0
+pre-commit>=4.5.1,<5.0.0
