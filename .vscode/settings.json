@@ -45,7 +45,6 @@
         "--warn-return-any",
         "--warn-unused-configs",
         "--no-implicit-optional",
-        "--pretty"
     ],
     "editor.rulers": [
         100
