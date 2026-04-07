@@ -347,30 +347,42 @@ the countdown. The server's authoritative timer still enforces the deadline rega
 
 ### UDP — Client ↔ Server (Latency Measurement)
 
-**`ping`** — sent by the client periodically; server echoes back as `pong`.
+**`ping`** — sent by the client periodically; server echoes back as `pong`. Includes identity
+fields so the server can map the UDP datagram to a joined TCP player and register their UDP
+address for timer ticks and answer counts.
 ```json
 {
   "type": "ping",
-  "timestamp": 1234567890.123
+  "timestamp": 142.731,
+  "session_code": "ABCD",
+  "display_name": "Alice"
 }
 ```
+- `session_code` must match the current session or the ping is silently dropped.
+- `display_name` must belong to an already joined TCP player or the ping is silently dropped.
+- The first valid ping from a player registers their UDP address for broadcasts. Subsequent
+  valid pings refresh the stored address (useful if the client's source port changes).
 
-**`pong`** — server's reply; includes the original client timestamp plus the server's current
-time. The client calculates RTT as `now - ping.timestamp`. The server uses half the RTT to
-compensate for network delay when scoring answers.
+**`pong`** — server's reply; echoes the client's timestamp and includes the server's receipt
+time. The client uses this to calculate RTT; the server uses half the RTT to compensate for
+network delay when scoring answers.
 ```json
 {
   "type": "pong",
-  "timestamp": 1234567890.123,
-  "server_time": 1234567890.456
+  "timestamp": 142.731,
+  "server_time": 142.812
 }
 ```
-- `timestamp` is echoed back unchanged so the client can compute `RTT = time.time() - pong["timestamp"]`.
-- `server_time` is the server's `time.time()` at the moment it sent the pong — used to
-  estimate clock offset if needed.
-- **Both sides must use `time.time()` (wall-clock) for ping/pong timestamps**, not
-  `time.monotonic()`. The game loop uses `time.monotonic()` for authoritative timers, but
-  RTT measurement requires wall-clock time on both client and server to be compatible.
+- `timestamp` is the client's original `time.monotonic()` value echoed back unchanged. The
+  client computes `RTT = time.monotonic() - pong["timestamp"]` on receipt.
+- `server_time` is the server's `time.monotonic()` at the moment it received the ping — kept
+  for debugging (e.g. measuring server-side processing delay). It is **not** usable for
+  cross-machine clock offset estimation because monotonic clocks have no shared origin across
+  processes.
+- **Both sides must use `time.monotonic()` for ping/pong timestamps.** The game loop also uses
+  `time.monotonic()` for authoritative question timers, keeping the entire timing stack on one
+  consistent, jump-proof clock. Do not use `time.time()` here — wall-clock adjustments (NTP,
+  DST) can cause RTT measurements to spike or go negative mid-game.
 
 ---
 

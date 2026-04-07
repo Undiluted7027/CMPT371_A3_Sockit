@@ -74,6 +74,7 @@ def read_until(sock: socket.socket, msg_type: str, timeout: float = 15.0) -> dic
 
 
 def main() -> None:
+    """Run end-to-end smoke checks for the game loop using a local server."""
     print("\nSmoke test — GameLoop end-to-end\n")
 
     # ------------------------------------------------------------------
@@ -178,7 +179,11 @@ def main() -> None:
 
     check("correct_answer is 3", r1["correct_answer"] == 3, str(r1["correct_answer"]))
     lb = {e["name"]: e["score"] for e in r1["leaderboard"]}
-    check("Alice score is 1", lb.get("Alice") == 1, str(lb))
+    check(
+        "Alice score > 0 (time-based, between 500 and 1000)",
+        500 <= lb.get("Alice", 0) <= 1000,
+        str(lb),
+    )
     check("Bob score is 0", lb.get("Bob") == 0, str(lb))
     check("show_correct_answer field present", "show_correct_answer" in r1)
     check("pause_duration field present", "pause_duration" in r1)
@@ -199,7 +204,11 @@ def main() -> None:
     read_until(bob, MsgType.QUESTION_RESULT)
 
     lb2 = {e["name"]: e["score"] for e in r2["leaderboard"]}
-    check("Alice score unchanged at 1", lb2.get("Alice") == 1, str(lb2))
+    check(
+        "Alice score unchanged (still 500–1000 from Q1)",
+        500 <= lb2.get("Alice", 0) <= 1000,
+        str(lb2),
+    )
     check("Bob score still 0", lb2.get("Bob") == 0, str(lb2))
 
     # ------------------------------------------------------------------

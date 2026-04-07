@@ -16,13 +16,12 @@ Phase 2 scope
 - Broadcast lobby_update to all joined clients on any change
 - Clean up on disconnect (lobby phase)
 
-Phase 4 will add
-----------------
-- Game loop (question sequencing, timers, scoring)
-- Handling ANSWER messages
-- Sending QUESTION, QUESTION_RESULT, GAME_OVER via broadcast()
-- Host-triggered game start / auto-start countdown
-- game_start message delivery
+Phase 4 additions (complete)
+-----------------------------
+- UDP networking: ping/pong registration, timer ticks, answer counts
+- ANSWER dispatch → answer queue stamped with time.monotonic() receive time
+- send_to() for personalised per-player TCP messages
+- get_client_rtt() hook (stub; latency compensation deferred to a later task)
 
 Threading model
 ---------------
@@ -42,14 +41,16 @@ Lock discipline
 
 import contextlib
 import logging
+import queue
 import random
 import socket
 import string
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .protocol import MsgType, recv_msg, send_msg
+from .protocol import MsgType, UdpSendQueue, recv_msg, recv_udp, send_msg, send_udp
 
 if TYPE_CHECKING:
     import queue as _queue
@@ -100,13 +101,27 @@ class GameServer:
 
         self._tcp_sock: socket.socket | None = None
         self._running = False
+        self._udp_sock: socket.socket | None = None
+        self._udp_running = False
+        self.udp_port = port
 
         # All successfully joined clients, keyed by display name.
         self._joined: dict[str, _ClientConn] = {}
         self._joined_lock = threading.Lock()
 
-        # Answer queue
-        self._answer_queue: _queue.Queue[tuple[str, int, int]] | None = None
+        # Receives (display_name, question_index, choice, receive_time) tuples
+        # while a question is active; None between questions.
+        self._answer_queue: _queue.Queue[tuple[str, int, int, float]] | None = None
+
+        # UDP state
+        self._udp_send_queue = UdpSendQueue()
+        self._udp_addrs: dict[str, tuple[str, int]] = {}
+        # Maps display_name -> (ping_timestamp, server_receive_time) from the
+        # most recent valid ping; used by a future latency-compensation task.
+        self._udp_ping_meta: dict[str, tuple[float, float]] = {}
+        self._udp_state_lock = threading.Lock()
+        self._udp_recv_thread: threading.Thread | None = None
+        self._udp_send_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -124,8 +139,15 @@ class GameServer:
         # Update self.port to the actual bound port — important when port=0 is
         # passed (OS assigns an ephemeral port).
         self.port = self._tcp_sock.getsockname()[1]
+        self.udp_port = self.port
         self._tcp_sock.listen(MAX_PLAYERS)
         self._running = True
+
+        self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._udp_sock.bind((self.host, self.port))
+        self._udp_sock.settimeout(0.2)
+        self._udp_running = True
 
         logger.info(
             "Server listening on %s:%d  session_code=%s",
@@ -136,6 +158,14 @@ class GameServer:
 
         t = threading.Thread(target=self._accept_loop, daemon=True, name="tcp-acceptor")
         t.start()
+        self._udp_recv_thread = threading.Thread(
+            target=self._udp_recv_loop, daemon=True, name="udp-recv"
+        )
+        self._udp_send_thread = threading.Thread(
+            target=self._udp_send_loop, daemon=True, name="udp-send"
+        )
+        self._udp_recv_thread.start()
+        self._udp_send_thread.start()
 
     def stop(self) -> None:
         """Signal the server to stop and close the listening socket.
@@ -143,9 +173,17 @@ class GameServer:
         In-flight client threads will finish naturally when their sockets close.
         """
         self._running = False
+        self._udp_running = False
         if self._tcp_sock is not None:
             self._tcp_sock.close()
             self._tcp_sock = None
+        if self._udp_sock is not None:
+            self._udp_sock.close()
+            self._udp_sock = None
+        if self._udp_recv_thread is not None:
+            self._udp_recv_thread.join(timeout=1.0)
+        if self._udp_send_thread is not None:
+            self._udp_send_thread.join(timeout=1.0)
         logger.info("Server stopped")
 
     # ------------------------------------------------------------------
@@ -204,7 +242,6 @@ class GameServer:
         elif t == MsgType.ANSWER:
             self._handle_answer(client, msg)
         else:
-            # ANSWER and other game-phase messages handled in Phase 4.
             logger.debug("Unhandled message type %r from %s", t, client.addr)
 
     # ------------------------------------------------------------------
@@ -277,17 +314,99 @@ class GameServer:
         logger.info(
             "Player %r left  (%d remaining)", client.display_name, len(self._joined)
         )
+        self._clear_udp_registration(client.display_name)
         self._broadcast_lobby_update()
 
     def _handle_answer(self, client: _ClientConn, msg: dict) -> None:
+        """Enqueue a player's answer with a server-stamped receive time.
+
+        The receive time is recorded immediately via ``time.monotonic()`` so the
+        game loop can compute answer_elapsed = receive_time - question_start_time
+        without client-clock trust. Answers are silently dropped when no question
+        is active (``_answer_queue`` is None) or the client has not joined.
+        """
         if self._answer_queue is not None and client.display_name is not None:
             self._answer_queue.put(
                 (
                     client.display_name,
                     int(msg.get("question_index", -1)),
                     int(msg.get("choice", -1)),
+                    time.monotonic(),
                 )
             )
+
+    # ------------------------------------------------------------------
+    # UDP
+    # ------------------------------------------------------------------
+
+    def _udp_recv_loop(self) -> None:
+        """Receive UDP datagrams and update registration state from pings."""
+        assert self._udp_sock is not None
+        while self._udp_running:
+            try:
+                msg, addr = recv_udp(self._udp_sock)
+            except TimeoutError:
+                continue
+            except OSError:
+                if self._udp_running:
+                    logger.debug("UDP receive loop exiting after socket error")
+                break
+            except ValueError:
+                logger.debug("Ignoring malformed UDP datagram")
+                continue
+
+            if msg.get("type") == MsgType.PING:
+                self._handle_ping(msg, addr)
+            else:
+                logger.debug("Ignoring unknown UDP message type %r", msg.get("type"))
+
+    def _udp_send_loop(self) -> None:
+        """Send queued UDP datagrams until the server stops."""
+        while self._udp_running:
+            try:
+                msg, addr = self._udp_send_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            sock = self._udp_sock
+            if sock is None:
+                break
+            with contextlib.suppress(OSError):
+                send_udp(sock, msg, addr)
+
+    def _handle_ping(self, msg: dict, addr: tuple[str, int]) -> None:
+        """Validate a ping, record UDP registration, and enqueue a pong."""
+        code = msg.get("session_code")
+        name = msg.get("display_name")
+        timestamp = msg.get("timestamp")
+
+        if code != self.session_code or not isinstance(name, str):
+            return
+        if not isinstance(timestamp, (int, float)):
+            return
+
+        server_receive_time = time.monotonic()
+        with self._joined_lock:
+            if name not in self._joined:
+                return
+            with self._udp_state_lock:
+                self._udp_addrs[name] = (str(addr[0]), int(addr[1]))
+                self._udp_ping_meta[name] = (float(timestamp), server_receive_time)
+
+        self._udp_send_queue.put(
+            {
+                "type": MsgType.PONG,
+                "timestamp": float(timestamp),
+                "server_time": server_receive_time,
+            },
+            addr,
+        )
+
+    def _clear_udp_registration(self, display_name: str) -> None:
+        """Remove all UDP state associated with one player."""
+        with self._udp_state_lock:
+            self._udp_addrs.pop(display_name, None)
+            self._udp_ping_meta.pop(display_name, None)
 
     # ------------------------------------------------------------------
     # Broadcast helpers
@@ -354,9 +473,61 @@ class GameServer:
             with contextlib.suppress(OSError):
                 send_msg(client.sock, msg, lock=client.send_lock)
 
-    def set_answer_queue(self, q: "_queue.Queue[tuple[str, int, int]] | None") -> None:
-        """Public function to set answer queue for GameLoop."""
+    def set_answer_queue(
+        self, q: "_queue.Queue[tuple[str, int, int, float]] | None"
+    ) -> None:
+        """Activate or deactivate answer collection for the current question.
+
+        Called by GameLoop at question start (pass a fresh Queue) and after the
+        collection window closes (pass None). While None, incoming ANSWER messages
+        are silently dropped.
+        """
         self._answer_queue = q
+
+    def broadcast_timer_tick(self, question_index: int, remaining: float) -> None:
+        """Queue a timer tick datagram for every registered UDP client."""
+        with self._udp_state_lock:
+            addrs = list(self._udp_addrs.values())
+        for addr in addrs:
+            self._udp_send_queue.put(
+                {
+                    "type": MsgType.TIMER_TICK,
+                    "question_index": question_index,
+                    "remaining": remaining,
+                },
+                addr,
+            )
+
+    def broadcast_answer_count(
+        self, question_index: int, answered: int, total: int
+    ) -> None:
+        """Queue an answer count datagram for every registered UDP client."""
+        with self._udp_state_lock:
+            addrs = list(self._udp_addrs.values())
+        for addr in addrs:
+            self._udp_send_queue.put(
+                {
+                    "type": MsgType.ANSWER_COUNT,
+                    "question_index": question_index,
+                    "answered": answered,
+                    "total": total,
+                },
+                addr,
+            )
+
+    def get_udp_ping_meta(self, display_name: str) -> tuple[float, float] | None:
+        """Return the most recent raw ping metadata for one player."""
+        with self._udp_state_lock:
+            return self._udp_ping_meta.get(display_name)
+
+    def get_client_rtt(self, display_name: str) -> float | None:
+        """Return the latest client RTT estimate, if available.
+
+        Task 7 uses this as a forward-compatible latency hook. Task 5 only
+        stores raw ping metadata, so there is no usable RTT value yet.
+        """
+        del display_name
+        return None
 
 
 # ---------------------------------------------------------------------------

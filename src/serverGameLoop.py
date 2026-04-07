@@ -13,6 +13,12 @@ import time
 
 from .protocol import MsgType
 from .quiz import Quiz
+from .scoring import (
+    PlayerGameStats,
+    build_final_rankings,
+    build_leaderboard,
+    score_answer,
+)
 from .server import GameServer
 
 logger = logging.getLogger(__name__)
@@ -37,8 +43,7 @@ class GameLoop:
         self.min_players = min_players
         self.lobby_countdown = lobby_countdown
         self.question_time = question_time
-        self.scores: dict[str, int] = {}
-        self.correct_counts: dict[str, int] = {}
+        self.player_stats: dict[str, PlayerGameStats] = {}
         self.running = False
 
     def start(self) -> None:
@@ -82,8 +87,7 @@ class GameLoop:
     def _broadcast_game_start(self) -> None:
         """Send GAME_START message to all players and initialise score tables."""
         players = self.server.get_players()
-        self.scores = {name: 0 for name in players}
-        self.correct_counts = {name: 0 for name in players}
+        self.player_stats = {name: PlayerGameStats(name=name) for name in players}
         self.server.broadcast({"type": MsgType.GAME_START})
         logger.info("Game started with players: %s", players)
 
@@ -92,35 +96,71 @@ class GameLoop:
     # ------------------------------------------------------------------
 
     def _collect_answers(
-        self, q_index: int, time_limit: float, players: list[str]
-    ) -> dict[str, int]:
-        """Block until all players answer or time_limit expires.
+        self,
+        q_index: int,
+        question_start_time: float,
+        time_limit: float,
+        players: list[str],
+    ) -> dict[str, tuple[int, float]]:
+        """Block until all players answer or the question window closes.
 
-        Returns a dict mapping display_name -> choice index for every answer
-        that arrived within the window.
+        ``question_start_time`` is the ``time.monotonic()`` value recorded
+        *before* the QUESTION broadcast, so ``deadline = question_start_time +
+        time_limit`` is the same authoritative window used for scoring. Calling
+        ``time.monotonic()`` here instead would introduce a small drift equal to
+        the broadcast latency.
+
+        Timer ticks are emitted approximately every 100 ms via UDP while the
+        window is open; a final tick at 0.0 is sent on exit.
+
+        Returns a dict mapping display_name -> (choice, receive_time) for every
+        answer that arrived within the window.
         """
-        answer_q: _queue.Queue[tuple[str, int, int]] = _queue.Queue()
+        answer_q: _queue.Queue[tuple[str, int, int, float]] = _queue.Queue()
         self.server.set_answer_queue(answer_q)
-        deadline = time.monotonic() + time_limit
-        answers: dict[str, int] = {}
+        deadline = question_start_time + time_limit
+        next_tick = question_start_time
+        answers: dict[str, tuple[int, float]] = {}
         expected = set(players)
         try:
             while time.monotonic() < deadline and len(answers) < len(expected):
-                remaining = deadline - time.monotonic()
+                now = time.monotonic()
+                if now >= next_tick:
+                    self.server.broadcast_timer_tick(q_index, max(0.0, deadline - now))
+                    next_tick = now + 0.1
+
+                remaining = deadline - now
                 if remaining <= 0:
                     break
                 try:
-                    name, idx, choice = answer_q.get(timeout=min(remaining, 0.1))
-                    if idx == q_index and name in expected:
-                        answers[name] = choice
+                    wait_for = min(remaining, max(0.0, next_tick - time.monotonic()))
+                    name, idx, choice, receive_time = answer_q.get(
+                        timeout=max(0.01, wait_for)
+                    )
+                    if idx == q_index and name in expected and name not in answers:
+                        answers[name] = (choice, receive_time)
+                        self.server.broadcast_answer_count(
+                            q_index, answered=len(answers), total=len(expected)
+                        )
                 except _queue.Empty:
                     pass
         finally:
             self.server.set_answer_queue(None)
+
+        self.server.broadcast_timer_tick(q_index, 0.0)
         return answers
 
     def _run_questions(self) -> None:
-        """Iterate through questions, collect answers, score, and broadcast results."""
+        """Iterate through questions, collect answers, score, and broadcast results.
+
+        For each question, ``question_start_time`` is recorded before the QUESTION
+        broadcast and passed to ``_collect_answers`` as the authoritative deadline
+        baseline. After collection, *all* players present at question start are
+        scored — those who did not answer receive ``answer_elapsed=None``, which
+        scores 0 and resets their streak. QUESTION_RESULT is sent individually to
+        each player via ``send_to`` so ``your_score``/``your_total``/``your_streak``
+        can be personalised.
+        """
         show_correct = bool(self.settings.get("show_correct_answer", True))
         show_lb = bool(self.settings.get("show_leaderboard", True))
         pause_duration = int(self.settings.get("pause_between_questions", 5))
@@ -128,6 +168,7 @@ class GameLoop:
         for q_index, question in enumerate(self.questions):
             players_at_start = self.server.get_players()
             logger.info("Sending Q%d: %s", q_index + 1, question.text)
+            question_start_time = time.monotonic()
 
             self.server.broadcast(
                 {
@@ -141,36 +182,58 @@ class GameLoop:
             )
 
             answers = self._collect_answers(
-                q_index, question.time_limit, players_at_start
+                q_index, question_start_time, question.time_limit, players_at_start
             )
 
-            # Placeholder scoring — replaced once Task 7 scoring engine is available.
-            for player, choice in answers.items():
-                if choice == question.answer:
-                    self.scores[player] += 1
-                    self.correct_counts[player] = self.correct_counts.get(player, 0) + 1
+            question_results: dict[str, tuple[int, int]] = {}
+            deadline = question_start_time + question.time_limit
+            for player in players_at_start:
+                if player not in self.player_stats:
+                    continue  # joined after game start - ignore
+                stats = self.player_stats[player]
+                rtt = self.server.get_client_rtt(player)
+                answer = answers.get(player)
+                if answer is None:
+                    result = score_answer(
+                        stats,
+                        is_correct=False,
+                        time_remaining=0.0,
+                        time_limit=question.time_limit,
+                        answer_elapsed=None,
+                        rtt=rtt,
+                    )
+                else:
+                    choice, receive_time = answer
+                    answer_elapsed = receive_time - question_start_time
+                    time_remaining = max(0.0, deadline - receive_time)
+                    result = score_answer(
+                        stats,
+                        is_correct=choice == question.answer,
+                        time_remaining=time_remaining,
+                        time_limit=question.time_limit,
+                        answer_elapsed=answer_elapsed,
+                        rtt=rtt,
+                    )
+                question_results[player] = (result.score, result.streak)
 
-            leaderboard = [
-                {"name": name, "score": score}
-                for name, score in sorted(self.scores.items(), key=lambda x: -x[1])
-            ]
+            leaderboard = build_leaderboard(self.player_stats)
 
-            # your_score / your_total / your_streak are per-player fields; they
-            # will be sent individually via send_to once the scoring engine (Task 7)
-            # is integrated. For now broadcast 0 as a safe placeholder.
-            self.server.broadcast(
-                {
-                    "type": MsgType.QUESTION_RESULT,
-                    "correct_answer": question.answer,
-                    "your_score": 0,
-                    "your_total": 0,
-                    "your_streak": 0,
-                    "leaderboard": leaderboard,
-                    "show_correct_answer": show_correct,
-                    "show_leaderboard": show_lb,
-                    "pause_duration": pause_duration,
-                }
-            )
+            for player in players_at_start:
+                your_score, your_streak = question_results[player]
+                self.server.send_to(
+                    player,
+                    {
+                        "type": MsgType.QUESTION_RESULT,
+                        "correct_answer": question.answer,
+                        "your_score": your_score,
+                        "your_total": self.player_stats[player].total_score,
+                        "your_streak": your_streak,
+                        "leaderboard": leaderboard,
+                        "show_correct_answer": show_correct,
+                        "show_leaderboard": show_lb,
+                        "pause_duration": pause_duration,
+                    },
+                )
             time.sleep(pause_duration)
 
     # ------------------------------------------------------------------
@@ -179,19 +242,7 @@ class GameLoop:
 
     def _send_game_over(self) -> None:
         """Send final GAME_OVER message with rankings."""
-        final_rankings = [
-            {
-                "rank": i + 1,
-                "name": name,
-                "score": score,
-                "correct": self.correct_counts.get(name, 0),
-                "streak": 0,
-                "fastest_answer": 0.0,
-            }
-            for i, (name, score) in enumerate(
-                sorted(self.scores.items(), key=lambda x: -x[1])
-            )
-        ]
+        final_rankings = build_final_rankings(self.player_stats)
         self.server.broadcast(
             {
                 "type": MsgType.GAME_OVER,

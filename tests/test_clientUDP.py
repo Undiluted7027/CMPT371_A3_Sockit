@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from src.clientUDP import ClientUDP
 from src.protocol import MsgType
 
@@ -129,14 +131,19 @@ def test_client_udp_dropped_packets(tmp_path: Path) -> None:
 # ------------------------
 
 
-def test_send_ping_includes_type_and_timestamp() -> None:
-    """send_ping() sends a PING datagram with type and a float timestamp."""
+def test_send_ping_includes_identity_and_timestamp() -> None:
+    """send_ping() sends a PING datagram with identity fields and a float timestamp."""
     # Minimal UDP server to capture the datagram.
     srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     srv.bind(("127.0.0.1", 0))
     port = srv.getsockname()[1]
 
-    client = ClientUDP("127.0.0.1", port)
+    client = ClientUDP(
+        "127.0.0.1",
+        port,
+        session_code="ABCD",
+        display_name="Alice",
+    )
     client.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     client.send_ping()
@@ -149,6 +156,27 @@ def test_send_ping_includes_type_and_timestamp() -> None:
     msg = json.loads(data.decode())
     assert msg["type"] == MsgType.PING
     assert isinstance(msg["timestamp"], float)
+    assert msg["session_code"] == "ABCD"
+    assert msg["display_name"] == "Alice"
+
+
+def test_send_ping_noop_without_identity() -> None:
+    """send_ping() quietly skips sending when session identity is unavailable."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+
+    client = ClientUDP("127.0.0.1", port)
+    client.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    client.send_ping()
+
+    srv.settimeout(0.2)
+    with pytest.raises((TimeoutError, OSError)):
+        srv.recvfrom(4096)
+
+    srv.close()
+    client.sock.close()
 
 
 def test_dispatch_routes_timer_tick() -> None:
@@ -189,3 +217,18 @@ def test_dispatch_unknown_type_calls_fallback() -> None:
 
     assert len(received) == 1
     assert received[0]["type"] == "unknown_udp_type"
+
+
+def test_dispatch_routes_pong() -> None:
+    """_dispatch() calls on_pong for PONG messages."""
+    received: list[dict[str, Any]] = []
+
+    class _Client(ClientUDP):
+        def on_pong(self, msg: dict[str, Any]) -> None:
+            received.append(msg)
+
+    client = _Client("127.0.0.1", 0)
+    msg = {"type": MsgType.PONG, "timestamp": 1.0, "server_time": 2.0}
+    client._dispatch(msg)
+
+    assert received == [msg]

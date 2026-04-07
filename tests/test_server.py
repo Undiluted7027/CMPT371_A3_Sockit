@@ -20,12 +20,13 @@ TestAnswerQueue    : ANSWER message enqueued when queue is set;
 import queue
 import socket
 import string
+import time
 from collections.abc import Generator
 from unittest.mock import patch
 
 import pytest
 
-from src.protocol import MsgType, recv_msg, send_msg
+from src.protocol import MsgType, recv_msg, recv_udp, send_msg, send_udp
 from src.server import GameServer, _generate_session_code
 
 # ---------------------------------------------------------------------------
@@ -365,7 +366,7 @@ class TestAnswerQueue:
         alice = _connect(server.port)
         _join(alice, server.session_code, "Alice")
 
-        answer_q: queue.Queue[tuple[str, int, int]] = queue.Queue()
+        answer_q: queue.Queue[tuple[str, int, int, float]] = queue.Queue()
         server.set_answer_queue(answer_q)
 
         send_msg(alice, {"type": MsgType.ANSWER, "question_index": 2, "choice": 1})
@@ -374,10 +375,11 @@ class TestAnswerQueue:
         time.sleep(0.1)  # allow server thread to process
 
         assert not answer_q.empty()
-        name, q_idx, choice = answer_q.get_nowait()
+        name, q_idx, choice, receive_time = answer_q.get_nowait()
         assert name == "Alice"
         assert q_idx == 2
         assert choice == 1
+        assert isinstance(receive_time, float)
 
         server.set_answer_queue(None)
         alice.close()
@@ -402,7 +404,7 @@ class TestAnswerQueue:
 
     def test_answer_from_unjoined_client_is_ignored(self, server: GameServer) -> None:
         """ANSWER from a client that never completed join is silently dropped."""
-        answer_q: queue.Queue[tuple[str, int, int]] = queue.Queue()
+        answer_q: queue.Queue[tuple[str, int, int, float]] = queue.Queue()
         server.set_answer_queue(answer_q)
 
         # Connect but do NOT join — display_name is None.
@@ -416,3 +418,183 @@ class TestAnswerQueue:
 
         server.set_answer_queue(None)
         sock.close()
+
+
+class TestUdp:
+    """Tests for UDP registration, pong replies, and shutdown behavior."""
+
+    def test_valid_ping_returns_pong_and_registers_player(
+        self, server: GameServer
+    ) -> None:
+        """A joined player's ping registers UDP and receives a pong."""
+        alice = _connect(server.port)
+        _join(alice, server.session_code, "Alice")
+
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.bind(("127.0.0.1", 0))
+        udp.settimeout(2.0)
+
+        send_udp(
+            udp,
+            {
+                "type": MsgType.PING,
+                "timestamp": 1.25,
+                "session_code": server.session_code,
+                "display_name": "Alice",
+            },
+            ("127.0.0.1", server.udp_port),
+        )
+
+        msg, _ = recv_udp(udp)
+        assert msg["type"] == MsgType.PONG
+        assert msg["timestamp"] == 1.25
+        assert isinstance(msg["server_time"], float)
+        assert server.get_udp_ping_meta("Alice") is not None
+
+        udp.close()
+        alice.close()
+
+    def test_invalid_session_code_ping_is_ignored(self, server: GameServer) -> None:
+        """Pings with the wrong session code are ignored."""
+        alice = _connect(server.port)
+        _join(alice, server.session_code, "Alice")
+
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.bind(("127.0.0.1", 0))
+        udp.settimeout(0.2)
+
+        send_udp(
+            udp,
+            {
+                "type": MsgType.PING,
+                "timestamp": 1.0,
+                "session_code": "ZZZZ",
+                "display_name": "Alice",
+            },
+            ("127.0.0.1", server.udp_port),
+        )
+
+        with pytest.raises((TimeoutError, OSError)):
+            recv_udp(udp)
+        assert server.get_udp_ping_meta("Alice") is None
+
+        udp.close()
+        alice.close()
+
+    def test_unknown_display_name_ping_is_ignored(self, server: GameServer) -> None:
+        """Pings for players who never joined are ignored."""
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.bind(("127.0.0.1", 0))
+        udp.settimeout(0.2)
+
+        send_udp(
+            udp,
+            {
+                "type": MsgType.PING,
+                "timestamp": 1.0,
+                "session_code": server.session_code,
+                "display_name": "Ghost",
+            },
+            ("127.0.0.1", server.udp_port),
+        )
+
+        with pytest.raises((TimeoutError, OSError)):
+            recv_udp(udp)
+        assert server.get_udp_ping_meta("Ghost") is None
+
+        udp.close()
+
+    def test_later_ping_updates_registered_udp_address(
+        self, server: GameServer
+    ) -> None:
+        """A second valid ping refreshes the stored UDP sender address."""
+        alice = _connect(server.port)
+        _join(alice, server.session_code, "Alice")
+
+        udp1 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp1.bind(("127.0.0.1", 0))
+        udp1.settimeout(2.0)
+        send_udp(
+            udp1,
+            {
+                "type": MsgType.PING,
+                "timestamp": 1.0,
+                "session_code": server.session_code,
+                "display_name": "Alice",
+            },
+            ("127.0.0.1", server.udp_port),
+        )
+        recv_udp(udp1)
+
+        udp2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp2.bind(("127.0.0.1", 0))
+        udp2.settimeout(2.0)
+        send_udp(
+            udp2,
+            {
+                "type": MsgType.PING,
+                "timestamp": 2.0,
+                "session_code": server.session_code,
+                "display_name": "Alice",
+            },
+            ("127.0.0.1", server.udp_port),
+        )
+        recv_udp(udp2)
+
+        server.broadcast_timer_tick(question_index=0, remaining=9.5)
+        msg, _ = recv_udp(udp2)
+        assert msg["type"] == MsgType.TIMER_TICK
+
+        udp1.settimeout(0.2)
+        with pytest.raises((TimeoutError, OSError)):
+            recv_udp(udp1)
+
+        udp1.close()
+        udp2.close()
+        alice.close()
+
+    def test_disconnect_clears_udp_registration(self, server: GameServer) -> None:
+        """Player disconnect removes their UDP registration and ping metadata."""
+        alice = _connect(server.port)
+        _join(alice, server.session_code, "Alice")
+
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.bind(("127.0.0.1", 0))
+        udp.settimeout(2.0)
+        send_udp(
+            udp,
+            {
+                "type": MsgType.PING,
+                "timestamp": 1.0,
+                "session_code": server.session_code,
+                "display_name": "Alice",
+            },
+            ("127.0.0.1", server.udp_port),
+        )
+        recv_udp(udp)
+        assert server.get_udp_ping_meta("Alice") is not None
+
+        alice.close()
+        time.sleep(0.1)
+
+        assert server.get_udp_ping_meta("Alice") is None
+        server.broadcast_timer_tick(question_index=0, remaining=5.0)
+        udp.settimeout(0.2)
+        with pytest.raises((TimeoutError, OSError)):
+            recv_udp(udp)
+
+        udp.close()
+
+    def test_udp_threads_exit_when_server_stops(self, server: GameServer) -> None:
+        """Idle UDP sender/receiver threads exit cleanly on server stop."""
+        assert server._udp_recv_thread is not None
+        assert server._udp_send_thread is not None
+
+        server.stop()
+
+        assert not server._udp_recv_thread.is_alive()
+        assert not server._udp_send_thread.is_alive()
+
+    def test_get_client_rtt_returns_none_for_now(self, server: GameServer) -> None:
+        """Task 7's RTT hook currently returns None until compensation is added."""
+        assert server.get_client_rtt("Alice") is None

@@ -32,17 +32,23 @@ class ClientUDP:
         server_ip: str,
         server_port: int,
         on_message: Callable[[dict[str, Any]], None] | None = None,
+        session_code: str | None = None,
+        display_name: str | None = None,
     ) -> None:
         """Initialize the UDP client.
 
         Args:
             server_ip:   Server IP address.
             server_port: Server UDP port.
-            on_message:  Optional fallback callback for unhandled message types.
+            on_message:   Optional fallback callback for unhandled message types.
+            session_code: Session code used to register UDP with the server.
+            display_name: Player display name used to register UDP with the server.
 
         """
         self.server_ip = server_ip
         self.server_port = server_port
+        self.session_code = session_code
+        self.display_name = display_name
         self._on_message_fallback = on_message
         self.sock: socket.socket | None = None
         self.listener_thread: threading.Thread | None = None
@@ -97,7 +103,17 @@ class ClientUDP:
 
     def send_ping(self) -> None:
         """Send a PING datagram to the server for RTT / latency measurement."""
-        self.send_message({"type": MsgType.PING, "timestamp": time.monotonic()})
+        if self.session_code is None or self.display_name is None:
+            logger.debug("Skipping UDP ping because session identity is incomplete")
+            return
+        self.send_message(
+            {
+                "type": MsgType.PING,
+                "timestamp": time.monotonic(),
+                "session_code": self.session_code,
+                "display_name": self.display_name,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Receive loop (background thread)
