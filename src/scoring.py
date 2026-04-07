@@ -16,7 +16,7 @@ class PlayerGameStats:
     current_streak: int = 0
     longest_streak: int = 0
     correct_count: int = 0
-    fastest_answer: float = 0.0
+    fastest_answer: float = 0.0  # 0.0 is the sentinel for "no correct answer yet"
 
 
 @dataclass
@@ -51,6 +51,15 @@ def score_answer(
     rtt: float | None = None,
 ) -> QuestionScore:
     """Apply one question result to cumulative player state.
+
+    Scoring formula (correct answers only)::
+
+        score = floor(max(MIN_POINTS, BASE_POINTS * time_remaining / time_limit)
+                      * streak_multiplier)
+
+    Answering instantly (time_remaining == time_limit) yields BASE_POINTS (1000).
+    Answering at the buzzer (time_remaining == 0) yields the MIN_POINTS floor (500).
+    Wrong answers and timeouts (answer_elapsed is None) score 0 and reset the streak.
 
     RTT is accepted for future latency compensation support. It is currently
     unused when ``None`` or any other value is passed.
@@ -128,7 +137,12 @@ def _sorted_players(
 
 
 def _streak_multiplier(current_streak: int) -> float:
-    """Return the hardcoded streak multiplier for the current streak."""
+    """Return the streak multiplier for the current streak length.
+
+    streak 1  → 1.0x (no bonus)
+    streak 2  → 1.1x
+    streak 3+ → 1.2x (capped)
+    """
     if current_streak >= 3:
         return 1.2
     if current_streak == 2:

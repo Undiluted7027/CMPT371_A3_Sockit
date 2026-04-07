@@ -102,7 +102,16 @@ class GameLoop:
         time_limit: float,
         players: list[str],
     ) -> dict[str, tuple[int, float]]:
-        """Block until all players answer or time_limit expires.
+        """Block until all players answer or the question window closes.
+
+        ``question_start_time`` is the ``time.monotonic()`` value recorded
+        *before* the QUESTION broadcast, so ``deadline = question_start_time +
+        time_limit`` is the same authoritative window used for scoring. Calling
+        ``time.monotonic()`` here instead would introduce a small drift equal to
+        the broadcast latency.
+
+        Timer ticks are emitted approximately every 100 ms via UDP while the
+        window is open; a final tick at 0.0 is sent on exit.
 
         Returns a dict mapping display_name -> (choice, receive_time) for every
         answer that arrived within the window.
@@ -142,7 +151,16 @@ class GameLoop:
         return answers
 
     def _run_questions(self) -> None:
-        """Iterate through questions, collect answers, score, and broadcast results."""
+        """Iterate through questions, collect answers, score, and broadcast results.
+
+        For each question, ``question_start_time`` is recorded before the QUESTION
+        broadcast and passed to ``_collect_answers`` as the authoritative deadline
+        baseline. After collection, *all* players present at question start are
+        scored — those who did not answer receive ``answer_elapsed=None``, which
+        scores 0 and resets their streak. QUESTION_RESULT is sent individually to
+        each player via ``send_to`` so ``your_score``/``your_total``/``your_streak``
+        can be personalised.
+        """
         show_correct = bool(self.settings.get("show_correct_answer", True))
         show_lb = bool(self.settings.get("show_leaderboard", True))
         pause_duration = int(self.settings.get("pause_between_questions", 5))

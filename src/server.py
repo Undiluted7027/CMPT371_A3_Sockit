@@ -16,13 +16,12 @@ Phase 2 scope
 - Broadcast lobby_update to all joined clients on any change
 - Clean up on disconnect (lobby phase)
 
-Phase 4 will add
-----------------
-- Game loop (question sequencing, timers, scoring)
-- Handling ANSWER messages
-- Sending QUESTION, QUESTION_RESULT, GAME_OVER via broadcast()
-- Host-triggered game start / auto-start countdown
-- game_start message delivery
+Phase 4 additions (complete)
+-----------------------------
+- UDP networking: ping/pong registration, timer ticks, answer counts
+- ANSWER dispatch → answer queue stamped with time.monotonic() receive time
+- send_to() for personalised per-player TCP messages
+- get_client_rtt() hook (stub; latency compensation deferred to a later task)
 
 Threading model
 ---------------
@@ -110,12 +109,15 @@ class GameServer:
         self._joined: dict[str, _ClientConn] = {}
         self._joined_lock = threading.Lock()
 
-        # Answer queue
+        # Receives (display_name, question_index, choice, receive_time) tuples
+        # while a question is active; None between questions.
         self._answer_queue: _queue.Queue[tuple[str, int, int, float]] | None = None
 
         # UDP state
         self._udp_send_queue = UdpSendQueue()
         self._udp_addrs: dict[str, tuple[str, int]] = {}
+        # Maps display_name -> (ping_timestamp, server_receive_time) from the
+        # most recent valid ping; used by a future latency-compensation task.
         self._udp_ping_meta: dict[str, tuple[float, float]] = {}
         self._udp_state_lock = threading.Lock()
         self._udp_recv_thread: threading.Thread | None = None
@@ -240,7 +242,6 @@ class GameServer:
         elif t == MsgType.ANSWER:
             self._handle_answer(client, msg)
         else:
-            # ANSWER and other game-phase messages handled in Phase 4.
             logger.debug("Unhandled message type %r from %s", t, client.addr)
 
     # ------------------------------------------------------------------
@@ -317,6 +318,13 @@ class GameServer:
         self._broadcast_lobby_update()
 
     def _handle_answer(self, client: _ClientConn, msg: dict) -> None:
+        """Enqueue a player's answer with a server-stamped receive time.
+
+        The receive time is recorded immediately via ``time.monotonic()`` so the
+        game loop can compute answer_elapsed = receive_time - question_start_time
+        without client-clock trust. Answers are silently dropped when no question
+        is active (``_answer_queue`` is None) or the client has not joined.
+        """
         if self._answer_queue is not None and client.display_name is not None:
             self._answer_queue.put(
                 (
@@ -468,7 +476,12 @@ class GameServer:
     def set_answer_queue(
         self, q: "_queue.Queue[tuple[str, int, int, float]] | None"
     ) -> None:
-        """Public function to set answer queue for GameLoop."""
+        """Activate or deactivate answer collection for the current question.
+
+        Called by GameLoop at question start (pass a fresh Queue) and after the
+        collection window closes (pass None). While None, incoming ANSWER messages
+        are silently dropped.
+        """
         self._answer_queue = q
 
     def broadcast_timer_tick(self, question_index: int, remaining: float) -> None:
