@@ -21,8 +21,8 @@ from unittest.mock import patch
 
 import pytest
 
-from protocol import MsgType, recv_msg, send_msg
-from server import GameServer, _generate_session_code
+from src.protocol import MsgType, recv_msg, send_msg
+from src.server import GameServer, _generate_session_code
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
