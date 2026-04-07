@@ -366,7 +366,7 @@ class TestAnswerQueue:
         alice = _connect(server.port)
         _join(alice, server.session_code, "Alice")
 
-        answer_q: queue.Queue[tuple[str, int, int]] = queue.Queue()
+        answer_q: queue.Queue[tuple[str, int, int, float]] = queue.Queue()
         server.set_answer_queue(answer_q)
 
         send_msg(alice, {"type": MsgType.ANSWER, "question_index": 2, "choice": 1})
@@ -375,10 +375,11 @@ class TestAnswerQueue:
         time.sleep(0.1)  # allow server thread to process
 
         assert not answer_q.empty()
-        name, q_idx, choice = answer_q.get_nowait()
+        name, q_idx, choice, receive_time = answer_q.get_nowait()
         assert name == "Alice"
         assert q_idx == 2
         assert choice == 1
+        assert isinstance(receive_time, float)
 
         server.set_answer_queue(None)
         alice.close()
@@ -403,7 +404,7 @@ class TestAnswerQueue:
 
     def test_answer_from_unjoined_client_is_ignored(self, server: GameServer) -> None:
         """ANSWER from a client that never completed join is silently dropped."""
-        answer_q: queue.Queue[tuple[str, int, int]] = queue.Queue()
+        answer_q: queue.Queue[tuple[str, int, int, float]] = queue.Queue()
         server.set_answer_queue(answer_q)
 
         # Connect but do NOT join — display_name is None.
@@ -593,3 +594,7 @@ class TestUdp:
 
         assert not server._udp_recv_thread.is_alive()
         assert not server._udp_send_thread.is_alive()
+
+    def test_get_client_rtt_returns_none_for_now(self, server: GameServer) -> None:
+        """Task 7's RTT hook currently returns None until compensation is added."""
+        assert server.get_client_rtt("Alice") is None

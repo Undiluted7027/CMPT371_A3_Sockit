@@ -111,7 +111,7 @@ class GameServer:
         self._joined_lock = threading.Lock()
 
         # Answer queue
-        self._answer_queue: _queue.Queue[tuple[str, int, int]] | None = None
+        self._answer_queue: _queue.Queue[tuple[str, int, int, float]] | None = None
 
         # UDP state
         self._udp_send_queue = UdpSendQueue()
@@ -323,6 +323,7 @@ class GameServer:
                     client.display_name,
                     int(msg.get("question_index", -1)),
                     int(msg.get("choice", -1)),
+                    time.monotonic(),
                 )
             )
 
@@ -464,7 +465,9 @@ class GameServer:
             with contextlib.suppress(OSError):
                 send_msg(client.sock, msg, lock=client.send_lock)
 
-    def set_answer_queue(self, q: "_queue.Queue[tuple[str, int, int]] | None") -> None:
+    def set_answer_queue(
+        self, q: "_queue.Queue[tuple[str, int, int, float]] | None"
+    ) -> None:
         """Public function to set answer queue for GameLoop."""
         self._answer_queue = q
 
@@ -503,6 +506,15 @@ class GameServer:
         """Return the most recent raw ping metadata for one player."""
         with self._udp_state_lock:
             return self._udp_ping_meta.get(display_name)
+
+    def get_client_rtt(self, display_name: str) -> float | None:
+        """Return the latest client RTT estimate, if available.
+
+        Task 7 uses this as a forward-compatible latency hook. Task 5 only
+        stores raw ping metadata, so there is no usable RTT value yet.
+        """
+        del display_name
+        return None
 
 
 # ---------------------------------------------------------------------------
