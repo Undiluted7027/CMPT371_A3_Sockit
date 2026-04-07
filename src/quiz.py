@@ -23,7 +23,7 @@ class Question:
 
         """
         self.text = text
-        self.type = q_type
+        self.question_type = q_type
         self.options = options
         self.answer = answer
         self.time_limit = time_limit
@@ -90,6 +90,22 @@ def load_quiz(file_path: str) -> Quiz:
     description = data.get("description", "")
 
     settings = data.get("settings", {})
+
+    if "show_correct_answer" in settings and not isinstance(
+        settings["show_correct_answer"], bool
+    ):
+        raise ValueError("settings.show_correct_answer must be a bool")
+    if "show_leaderboard" in settings and not isinstance(
+        settings["show_leaderboard"], bool
+    ):
+        raise ValueError("settings.show_leaderboard must be a bool")
+    if "pause_between_questions" in settings:
+        v = settings["pause_between_questions"]
+        if not isinstance(v, (int, float)) or v < 0:
+            raise ValueError(
+                "settings.pause_between_questions must be a non-negative number"
+            )
+
     default_time = settings.get("default_time_limit", 20)
 
     questions = []
@@ -123,6 +139,9 @@ def load_quiz(file_path: str) -> Quiz:
         # Validate options
         if not isinstance(options, list) or len(options) < 2:
             raise ValueError(f"{prefix} options must be a list with at least 2 items")
+
+        if q_type == "multiple_choice" and len(options) != 4:
+            raise ValueError(f"{prefix} multiple_choice must have exactly 4 options")
 
         # Special rule for true/false
         if q_type == "true_false" and options != ["True", "False"]:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from src.clientUDP import ClientUDP
+from src.protocol import MsgType
 
 
 class MockUDPServer:
@@ -121,3 +122,70 @@ def test_client_udp_dropped_packets(tmp_path: Path) -> None:
     # We expect dropped packets
     expected_seqs: list[int] = [0, 2, 4]  # 1 and 3 dropped
     assert seqs == expected_seqs, f"Dropped packets not detected: {seqs}"
+
+
+# ------------------------
+# Tests for send_ping and typed dispatch
+# ------------------------
+
+
+def test_send_ping_includes_type_and_timestamp() -> None:
+    """send_ping() sends a PING datagram with type and a float timestamp."""
+    # Minimal UDP server to capture the datagram.
+    srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+
+    client = ClientUDP("127.0.0.1", port)
+    client.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    client.send_ping()
+
+    srv.settimeout(2.0)
+    data, _ = srv.recvfrom(4096)
+    srv.close()
+    client.sock.close()
+
+    msg = json.loads(data.decode())
+    assert msg["type"] == MsgType.PING
+    assert isinstance(msg["timestamp"], float)
+
+
+def test_dispatch_routes_timer_tick() -> None:
+    """_dispatch() calls on_timer_tick for TIMER_TICK messages."""
+    received: list[dict[str, Any]] = []
+
+    class _Client(ClientUDP):
+        def on_timer_tick(self, msg: dict[str, Any]) -> None:
+            received.append(msg)
+
+    client = _Client("127.0.0.1", 0)
+    msg = {"type": MsgType.TIMER_TICK, "question_index": 2, "remaining": 8.5}
+    client._dispatch(msg)
+
+    assert received == [msg]
+
+
+def test_dispatch_routes_answer_count() -> None:
+    """_dispatch() calls on_answer_count for ANSWER_COUNT messages."""
+    received: list[dict[str, Any]] = []
+
+    class _Client(ClientUDP):
+        def on_answer_count(self, msg: dict[str, Any]) -> None:
+            received.append(msg)
+
+    client = _Client("127.0.0.1", 0)
+    msg = {"type": MsgType.ANSWER_COUNT, "question_index": 2, "answered": 3, "total": 5}
+    client._dispatch(msg)
+
+    assert received == [msg]
+
+
+def test_dispatch_unknown_type_calls_fallback() -> None:
+    """_dispatch() calls on_message fallback for unknown UDP message types."""
+    received: list[dict[str, Any]] = []
+    client = ClientUDP("127.0.0.1", 0, on_message=received.append)
+    client._dispatch({"type": "unknown_udp_type", "data": 42})
+
+    assert len(received) == 1
+    assert received[0]["type"] == "unknown_udp_type"

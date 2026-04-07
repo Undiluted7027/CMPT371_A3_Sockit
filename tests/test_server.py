@@ -12,8 +12,12 @@ TestDisconnect     : joined client leaves → lobby_update with reduced list;
 TestBroadcast      : broadcast() reaches all joined clients;
                      send_to() delivers to exactly one named player;
                      send_to() non-existent name is a silent no-op
+TestAnswerQueue    : ANSWER message enqueued when queue is set;
+                     ANSWER ignored when no queue is set;
+                     ANSWER from un-joined client is silently ignored
 """
 
+import queue
 import socket
 import string
 from collections.abc import Generator
@@ -351,3 +355,64 @@ class TestBroadcast:
     def test_send_to_nonexistent_player_is_noop(self, server: GameServer) -> None:
         """Treat send_to for an unknown player as a silent no-op."""
         server.send_to("Nobody", {"type": MsgType.ERROR, "message": "unreachable"})
+
+
+class TestAnswerQueue:
+    """ANSWER message handling and answer queue integration."""
+
+    def test_answer_enqueued_when_queue_is_set(self, server: GameServer) -> None:
+        """ANSWER from a joined player is put into the queue."""
+        alice = _connect(server.port)
+        _join(alice, server.session_code, "Alice")
+
+        answer_q: queue.Queue[tuple[str, int, int]] = queue.Queue()
+        server.set_answer_queue(answer_q)
+
+        send_msg(alice, {"type": MsgType.ANSWER, "question_index": 2, "choice": 1})
+        import time
+
+        time.sleep(0.1)  # allow server thread to process
+
+        assert not answer_q.empty()
+        name, q_idx, choice = answer_q.get_nowait()
+        assert name == "Alice"
+        assert q_idx == 2
+        assert choice == 1
+
+        server.set_answer_queue(None)
+        alice.close()
+
+    def test_answer_ignored_when_no_queue_set(self, server: GameServer) -> None:
+        """ANSWER message is silently dropped when no queue is registered."""
+        alice = _connect(server.port)
+        _join(alice, server.session_code, "Alice")
+
+        # No queue set — should not raise, server keeps running.
+        send_msg(alice, {"type": MsgType.ANSWER, "question_index": 0, "choice": 0})
+        import time
+
+        time.sleep(0.1)
+
+        # Server is still responsive — Alice can still receive messages.
+        server.broadcast({"type": MsgType.ERROR, "message": "still alive"})
+        msg = recv_msg(alice)
+        assert msg["message"] == "still alive"
+
+        alice.close()
+
+    def test_answer_from_unjoined_client_is_ignored(self, server: GameServer) -> None:
+        """ANSWER from a client that never completed join is silently dropped."""
+        answer_q: queue.Queue[tuple[str, int, int]] = queue.Queue()
+        server.set_answer_queue(answer_q)
+
+        # Connect but do NOT join — display_name is None.
+        sock = _connect(server.port)
+        send_msg(sock, {"type": MsgType.ANSWER, "question_index": 0, "choice": 0})
+        import time
+
+        time.sleep(0.1)
+
+        assert answer_q.empty()
+
+        server.set_answer_queue(None)
+        sock.close()

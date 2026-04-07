@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from src.clientTCP import ClientTCP
+from src.protocol import MsgType, recv_msg
 
 
 # ------------------------
@@ -179,3 +180,140 @@ def test_multiple_clients_echo() -> None:
     for i, rec in enumerate(received_lists):
         assert len(rec) == 1
         assert rec[0]["msg"] == f"hello {i}"
+
+
+# ------------------------
+# Tests for new join / send_answer / dispatch API
+# ------------------------
+
+
+def _make_loopback_pair() -> tuple[socket.socket, socket.socket]:
+    """Return a connected (client_sock, server_sock) pair using socketpair."""
+    a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    return a, b
+
+
+def test_join_sends_correct_fields() -> None:
+    """join() sends a JOIN message with session_code and display_name."""
+    client_sock, server_sock = _make_loopback_pair()
+    client = ClientTCP("127.0.0.1", 0)
+    client.sock = client_sock
+    client.running = True
+
+    client.join("ABCD", "Alice")
+
+    msg = recv_msg(server_sock)
+    client_sock.close()
+    server_sock.close()
+
+    assert msg["type"] == MsgType.JOIN
+    assert msg["session_code"] == "ABCD"
+    assert msg["display_name"] == "Alice"
+
+
+def test_send_answer_sends_correct_fields() -> None:
+    """send_answer() sends an ANSWER message with question_index and choice."""
+    client_sock, server_sock = _make_loopback_pair()
+    client = ClientTCP("127.0.0.1", 0)
+    client.sock = client_sock
+    client.running = True
+
+    client.send_answer(question_index=3, choice=1)
+
+    msg = recv_msg(server_sock)
+    client_sock.close()
+    server_sock.close()
+
+    assert msg["type"] == MsgType.ANSWER
+    assert msg["question_index"] == 3
+    assert msg["choice"] == 1
+
+
+def test_send_answer_noop_when_disconnected() -> None:
+    """send_answer() does nothing when the client is not connected."""
+    client = ClientTCP("127.0.0.1", 0)
+    # running=False, sock=None — should not raise
+    client.send_answer(question_index=0, choice=0)
+
+
+def test_dispatch_routes_lobby_update() -> None:
+    """_dispatch() calls on_lobby_update for LOBBY_UPDATE messages."""
+    received: list[tuple] = []
+
+    class _Client(ClientTCP):
+        def on_lobby_update(
+            self,
+            players: list[str],
+            host_started_countdown: bool,
+            countdown_remaining: float | None,
+        ) -> None:  # type: ignore[override]
+            received.append((players, host_started_countdown, countdown_remaining))
+
+    client = _Client("127.0.0.1", 0)
+    client._dispatch(
+        {
+            "type": MsgType.LOBBY_UPDATE,
+            "players": ["Alice", "Bob"],
+            "host_started_countdown": False,
+            "countdown_remaining": None,
+        }
+    )
+
+    assert len(received) == 1
+    assert received[0] == (["Alice", "Bob"], False, None)
+
+
+def test_dispatch_routes_error() -> None:
+    """_dispatch() calls on_error for ERROR messages."""
+    errors: list[str] = []
+
+    class _Client(ClientTCP):
+        def on_error(self, message: str) -> None:
+            errors.append(message)
+
+    client = _Client("127.0.0.1", 0)
+    client._dispatch(
+        {"type": MsgType.ERROR, "message": "Name 'Alice' is already taken"}
+    )
+
+    assert errors == ["Name 'Alice' is already taken"]
+
+
+def test_dispatch_unknown_type_calls_fallback() -> None:
+    """_dispatch() calls on_message fallback for unknown message types."""
+    received: list[dict] = []
+    client = ClientTCP("127.0.0.1", 0, on_message=received.append)
+    client._dispatch({"action": "ping"})  # no "type" key
+
+    assert len(received) == 1
+    assert received[0] == {"action": "ping"}
+
+
+def test_on_disconnect_called_on_server_close() -> None:
+    """on_disconnect fires when the server closes the connection."""
+    disconnected: list[bool] = []
+    event = threading.Event()
+
+    class _Client(ClientTCP):
+        def on_disconnect(self) -> None:
+            disconnected.append(True)
+            event.set()
+
+    # Minimal server: accept one connection then immediately close it.
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def _close_immediately() -> None:
+        conn, _ = srv.accept()
+        conn.close()
+        srv.close()
+
+    threading.Thread(target=_close_immediately, daemon=True).start()
+
+    client = _Client("127.0.0.1", port)
+    client.connect()
+    assert event.wait(timeout=2.0), "on_disconnect was not called"
+    assert disconnected == [True]
