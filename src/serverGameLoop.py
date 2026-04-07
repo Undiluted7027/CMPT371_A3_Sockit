@@ -102,21 +102,33 @@ class GameLoop:
         answer_q: _queue.Queue[tuple[str, int, int]] = _queue.Queue()
         self.server.set_answer_queue(answer_q)
         deadline = time.monotonic() + time_limit
+        next_tick = time.monotonic()
         answers: dict[str, int] = {}
         expected = set(players)
         try:
             while time.monotonic() < deadline and len(answers) < len(expected):
-                remaining = deadline - time.monotonic()
+                now = time.monotonic()
+                if now >= next_tick:
+                    self.server.broadcast_timer_tick(q_index, max(0.0, deadline - now))
+                    next_tick = now + 0.1
+
+                remaining = deadline - now
                 if remaining <= 0:
                     break
                 try:
-                    name, idx, choice = answer_q.get(timeout=min(remaining, 0.1))
-                    if idx == q_index and name in expected:
+                    wait_for = min(remaining, max(0.0, next_tick - time.monotonic()))
+                    name, idx, choice = answer_q.get(timeout=max(0.01, wait_for))
+                    if idx == q_index and name in expected and name not in answers:
                         answers[name] = choice
+                        self.server.broadcast_answer_count(
+                            q_index, answered=len(answers), total=len(expected)
+                        )
                 except _queue.Empty:
                     pass
         finally:
             self.server.set_answer_queue(None)
+
+        self.server.broadcast_timer_tick(q_index, 0.0)
         return answers
 
     def _run_questions(self) -> None:

@@ -11,16 +11,16 @@ TestGameLoop : GAME_START broadcast; QUESTION broadcast fields;
 import json
 import socket
 import threading
-from pathlib import Path
 from collections.abc import Generator
+from pathlib import Path
+from typing import cast
 
 import pytest
 
-from src.protocol import MsgType, recv_msg, send_msg
+from src.protocol import MsgType, recv_msg, recv_udp, send_msg, send_udp
 from src.quiz import load_quiz
 from src.server import GameServer
 from src.serverGameLoop import GameLoop
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -65,6 +65,25 @@ def _join_player(port: int, code: str, name: str) -> socket.socket:
     return sock
 
 
+def _register_udp(port: int, session_code: str, display_name: str) -> socket.socket:
+    """Register one player's UDP address by sending a valid ping."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(2.0)
+    send_udp(
+        sock,
+        {
+            "type": MsgType.PING,
+            "timestamp": 1.0,
+            "session_code": session_code,
+            "display_name": display_name,
+        },
+        ("127.0.0.1", port),
+    )
+    recv_udp(sock)  # pong
+    return sock
+
+
 def _read_until(sock: socket.socket, msg_type: str, limit: int = 15) -> dict:
     """Read and discard messages until one matching msg_type is found."""
     sock.settimeout(5.0)
@@ -73,6 +92,15 @@ def _read_until(sock: socket.socket, msg_type: str, limit: int = 15) -> dict:
         if msg["type"] == msg_type:
             return msg
     pytest.fail(f"Did not receive {msg_type!r} within {limit} messages")
+
+
+def _read_udp_until(sock: socket.socket, msg_type: str, limit: int = 30) -> dict:
+    """Read and discard UDP datagrams until one matching msg_type is found."""
+    for _ in range(limit):
+        msg, _ = recv_udp(sock)
+        if msg["type"] == msg_type:
+            return cast("dict", msg)
+    pytest.fail(f"Did not receive {msg_type!r} within {limit} datagrams")
 
 
 def _start_loop(
@@ -193,5 +221,52 @@ class TestGameLoop:
         assert names == {"Alice", "Bob"}
 
         t.join(timeout=5)
+        alice.close()
+        bob.close()
+
+    def test_game_loop_emits_timer_ticks_to_registered_udp_clients(
+        self, server: GameServer, tmp_path: Path
+    ) -> None:
+        """Registered UDP clients receive timer ticks during active questions."""
+        quiz = _make_quiz(tmp_path, time_limit=0.3)
+        alice = _join_player(server.port, server.session_code, "Alice")
+        bob = _join_player(server.port, server.session_code, "Bob")
+        recv_msg(alice)
+        alice_udp = _register_udp(server.udp_port, server.session_code, "Alice")
+
+        _start_loop(server, quiz)
+
+        msg = _read_udp_until(alice_udp, MsgType.TIMER_TICK)
+
+        assert msg["question_index"] == 0
+        assert isinstance(msg["remaining"], float)
+
+        alice_udp.close()
+        alice.close()
+        bob.close()
+
+    def test_game_loop_emits_answer_count_to_registered_udp_clients(
+        self, server: GameServer, tmp_path: Path
+    ) -> None:
+        """Registered UDP clients receive answer-count updates as answers arrive."""
+        quiz = _make_quiz(tmp_path, time_limit=0.3)
+        alice = _join_player(server.port, server.session_code, "Alice")
+        bob = _join_player(server.port, server.session_code, "Bob")
+        recv_msg(alice)
+        alice_udp = _register_udp(server.udp_port, server.session_code, "Alice")
+
+        _start_loop(server, quiz)
+
+        _read_until(alice, MsgType.QUESTION)
+        _read_until(bob, MsgType.QUESTION)
+        send_msg(alice, {"type": MsgType.ANSWER, "question_index": 0, "choice": 3})
+
+        msg = _read_udp_until(alice_udp, MsgType.ANSWER_COUNT)
+
+        assert msg["question_index"] == 0
+        assert msg["answered"] == 1
+        assert msg["total"] == 2
+
+        alice_udp.close()
         alice.close()
         bob.close()
