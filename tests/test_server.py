@@ -168,7 +168,7 @@ class TestJoinHandshake:
 
     def test_full_lobby_returns_error(self, server: GameServer) -> None:
         """Reject a join request once the lobby reaches MAX_PLAYERS."""
-        with patch("server.MAX_PLAYERS", 2):
+        with patch("src.server.MAX_PLAYERS", 2):
             sockets = []
             for i in range(2):
                 s = _connect(server.port)

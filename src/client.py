@@ -38,7 +38,7 @@ import logging
 import socket
 import threading
 
-from src.protocol import MsgType, recv_msg, send_msg
+from .protocol import MsgType, recv_msg, send_msg
 
 logger = logging.getLogger(__name__)
 

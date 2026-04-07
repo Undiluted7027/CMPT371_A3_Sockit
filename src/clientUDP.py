@@ -54,7 +54,7 @@ class ClientUDP:
         message_with_seq["seq"] = self.seq_num
         self.seq_num += 1
 
-        payload = json.dumps(message).encode("utf-8")
+        payload = json.dumps(message_with_seq).encode("utf-8")
         try:
             self.sock.sendto(payload, (self.server_ip, self.server_port))
         except Exception as e:

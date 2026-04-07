@@ -1,5 +1,6 @@
 """Test for ClientTCP using a simulated (temp) TCP server."""
 
+import contextlib
 import socket
 import threading
 import time
@@ -18,11 +19,13 @@ class MockServer:
     """A simple TCP server that echoes back received messages."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = 0) -> None:
+        """Instantiate a TCP server that echoes received messages."""
         self.host = host
         self.port = port
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((self.host, self.port))
-        self.sock.listen(1)
+        self.sock.listen(10)
         self.port = self.sock.getsockname()[1]  # Get assigned port if port = 0
         self.client_conn: socket.socket | None = None
         self.running: bool = False
@@ -35,47 +38,56 @@ class MockServer:
         self.thread.start()
 
     def _serve(self) -> None:
-        """Accept a connection and echo messages."""
-        self.client_conn, _ = self.sock.accept()
+        """Accept connections and echo messages; one daemon thread per client."""
         while self.running:
             try:
-                header = self._recv_exact(4)
+                conn, _ = self.sock.accept()
+            except Exception:
+                break
+            self.client_conn = conn
+            t = threading.Thread(target=self._handle_client, args=(conn,), daemon=True)
+            t.start()
+
+    def _handle_client(self, conn: socket.socket) -> None:
+        """Echo all framed messages back to one connected client."""
+        while self.running:
+            try:
+                header = self._recv_exact_conn(conn, 4)
                 if header is None:
                     break
                 length = int.from_bytes(header, "big")
-                data = self._recv_exact(length)
+                data = self._recv_exact_conn(conn, length)
                 if data is None:
                     break
-                # Echo back the same message
-                self.client_conn.sendall(header + data)
+                conn.sendall(header + data)
             except Exception:
                 break
+        with contextlib.suppress(Exception):
+            conn.close()
 
-    def _recv_exact(self, n: int) -> bytes | None:
-        """Receive exactly n bytes from client or return None if disconnected."""
-        assert self.client_conn is not None
+    def _recv_exact_conn(self, conn: socket.socket, n: int) -> bytes | None:
+        """Receive exactly n bytes from the given connection."""
         buf = b""
         while len(buf) < n:
-            chunk = self.client_conn.recv(n - len(buf))
+            chunk = conn.recv(n - len(buf))
             if not chunk:
                 return None
             buf += chunk
         return buf
 
+    def _recv_exact(self, n: int) -> bytes | None:
+        """Receive exactly n bytes from the last accepted client connection."""
+        assert self.client_conn is not None
+        return self._recv_exact_conn(self.client_conn, n)
+
     def stop(self) -> None:
         """Stop server and close sockets."""
         self.running = False
         if self.client_conn:
-            try:
+            with contextlib.suppress(Exception):
                 self.client_conn.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
             self.client_conn.close()
         self.sock.close()
-
-
-# Prepare typed callbacks for each client
-callbacks: list[Callable[[dict[str, Any]], None]] = []
 
 
 # ------------------------
@@ -128,22 +140,29 @@ def test_client_tcp_disconnect_no_server() -> None:
 
 def test_multiple_clients_echo() -> None:
     """Test multiple ClientTCP instances sending messages concurrently."""
-    host, port = "127.0.0.1", 9002
-    stop_event = threading.Event()
-    server_thread = threading.Thread(
-        target=MockServer, args=(host, port, stop_event), daemon=True
-    )
-    server_thread.start()
-
     num_clients = 3
-    clients: list[ClientTCP] = []
     received_lists: list[list[dict[str, Any]]] = [[] for _ in range(num_clients)]
 
-    # Create and connect clients
+    def make_callback(idx: int) -> Callable[[dict[str, Any]], None]:
+        def cb(msg: dict[str, Any]) -> None:
+            received_lists[idx].append(msg)
+
+        return cb
+
+    callbacks: list[Callable[[dict[str, Any]], None]] = [
+        make_callback(i) for i in range(num_clients)
+    ]
+
+    server = MockServer()
+    server.start()
+    time.sleep(0.1)
+
+    clients: list[ClientTCP] = []
     for i in range(num_clients):
-        client = ClientTCP(host, port, on_message=callbacks[i])
+        client = ClientTCP("127.0.0.1", server.port, on_message=callbacks[i])
         client.connect()
         clients.append(client)
+        time.sleep(0.05)  # stagger connects slightly
 
     # Send a message from each client
     for i, client in enumerate(clients):
@@ -154,8 +173,7 @@ def test_multiple_clients_echo() -> None:
     # Disconnect all
     for client in clients:
         client.disconnect()
-    stop_event.set()
-    server_thread.join()
+    server.stop()
 
     # Assert each client received its own message back
     for i, rec in enumerate(received_lists):

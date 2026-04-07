@@ -48,7 +48,7 @@ import string
 import threading
 from dataclasses import dataclass, field
 
-from src.protocol import MsgType, recv_msg, send_msg
+from .protocol import MsgType, recv_msg, send_msg
 
 logger = logging.getLogger(__name__)
 

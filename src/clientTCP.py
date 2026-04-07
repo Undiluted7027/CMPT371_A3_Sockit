@@ -1,5 +1,6 @@
 """Handles TCP networking for the player client."""
 
+import contextlib
 import json
 import socket
 import struct
@@ -101,10 +102,9 @@ class ClientTCP:
     def disconnect(self) -> None:
         """Stop the listener thread and close the socket."""
         self.running = False
-        if self.sock:
-            try:
-                self.sock.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-            self.sock.close()
-            self.sock = None
+        sock, self.sock = self.sock, None  # snapshot and clear atomically
+        if sock is not None:
+            with contextlib.suppress(Exception):
+                sock.shutdown(socket.SHUT_RDWR)
+            with contextlib.suppress(Exception):
+                sock.close()

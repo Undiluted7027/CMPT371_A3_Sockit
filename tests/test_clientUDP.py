@@ -1,3 +1,5 @@
+"""Test for ClientUDP using a simulated (temp) UDP server."""
+
 import json
 import socket
 import threading
@@ -5,13 +7,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 from src.clientUDP import ClientUDP
 
 
-# Mock UDP server for testing
 class MockUDPServer:
+    """Mock UDP server for testing."""
+
     def __init__(self, host: str, port: int, drop_every: int = 0) -> None:
+        """Instantiate a UDP server that echoes received messages."""
         self.host = host
         self.port = port
         self.drop_every = drop_every  # drop every Nth message
@@ -21,6 +24,7 @@ class MockUDPServer:
         self.thread: threading.Thread | None = None
 
     def start(self) -> None:
+        """Start the server."""
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.host, self.port))
         self.running = True
@@ -28,22 +32,29 @@ class MockUDPServer:
         self.thread.start()
 
     def run(self) -> None:
+        """Run the server, optionally dropping every Nth received message."""
         assert self.sock is not None
+        count = 0
         while self.running:
             try:
                 data, _ = self.sock.recvfrom(4096)
                 msg: dict = json.loads(data.decode("utf-8"))
+                count += 1
+                if self.drop_every > 0 and count % self.drop_every == 0:
+                    continue  # simulate packet drop
                 self.received.append(msg)
             except Exception:
                 continue
 
     def stop(self) -> None:
+        """Stop the server."""
         self.running = False
         if self.sock:
             self.sock.close()
 
 
 def test_client_udp_sequence(tmp_path: Path) -> None:
+    """Test a client with UDP sequence."""
     host: str = "127.0.0.1"
     port: int = 12345
 

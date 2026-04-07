@@ -1,3 +1,5 @@
+"""Quiz loading and validation utilities for Sockit Trivia."""
+
 import json
 
 
@@ -5,9 +7,21 @@ import json
 # Question Class - represents a single quiz question
 # -----------------------------
 class Question:
+    """Represent a single quiz question and its scoring metadata."""
+
     def __init__(
         self, text: str, q_type: str, options: list, answer: int, time_limit: float
     ) -> None:
+        """Initialize a Question instance.
+
+        Args:
+            text: The question prompt shown to players.
+            q_type: The question type (for example, "multiple_choice" or "true_false").
+            options: The ordered list of answer options.
+            answer: The 0-based index of the correct option.
+            time_limit: The time allowed to answer, in seconds.
+
+        """
         self.text = text
         self.type = q_type
         self.options = options
@@ -19,9 +33,20 @@ class Question:
 # Quiz Class - represents the entire quiz
 # -----------------------------
 class Quiz:
+    """Represent a fully loaded quiz, including settings and questions."""
+
     def __init__(
         self, title: str, description: str, settings: dict, questions: list
     ) -> None:
+        """Initialize a Quiz instance.
+
+        Args:
+            title: The quiz title displayed in the UI.
+            description: Optional descriptive text about the quiz.
+            settings: Quiz-wide configuration loaded from JSON.
+            questions: The ordered list of Question objects.
+
+        """
         self.title = title
         self.description = description
         self.settings = settings
@@ -32,16 +57,24 @@ class Quiz:
 # Main Function - loads and validates quiz JSON file
 # -----------------------------
 def load_quiz(file_path: str) -> Quiz:
-    """Loads and validates a quiz JSON file.
-    Returns a Quiz object if valid.
-    Raises ValueError if invalid.
+    """Load and validate quiz data from a JSON file.
+
+    Args:
+        file_path: Path to a quiz JSON file on disk.
+
+    Returns:
+        A Quiz object with validated metadata and question entries.
+
+    Raises:
+        ValueError: If the file cannot be loaded or validation fails.
+
     """
     # Step 1: Load JSON
     try:
         with open(file_path) as f:
             data = json.load(f)
     except Exception as e:
-        raise ValueError(f"Failed to load quiz file: {e}")
+        raise ValueError(f"Failed to load quiz file: {e}") from e
 
     # Step 2: Validate top-level fields
     if "title" not in data:
@@ -92,11 +125,8 @@ def load_quiz(file_path: str) -> Quiz:
             raise ValueError(f"{prefix} options must be a list with at least 2 items")
 
         # Special rule for true/false
-        if q_type == "true_false":
-            if options != ["True", "False"]:
-                raise ValueError(
-                    f"{prefix} true_false options must be ['True', 'False']"
-                )
+        if q_type == "true_false" and options != ["True", "False"]:
+            raise ValueError(f"{prefix} true_false options must be ['True', 'False']")
 
         # Validate answer index
         if not isinstance(answer, int) or answer < 0 or answer >= len(options):

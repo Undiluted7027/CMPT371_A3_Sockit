@@ -1,4 +1,5 @@
-"""Handles:
+"""Handles game loop.
+
 - Lobby auto-start countdown
 - Game start
 - Question sequencing with timers
@@ -10,8 +11,8 @@ import threading
 import time
 from typing import Any
 
-from src.protocol import MsgType
-from src.server import GameServer
+from .protocol import MsgType
+from .server import GameServer
 
 
 class GameLoop:
@@ -25,6 +26,7 @@ class GameLoop:
         lobby_countdown: int = 10,
         question_time: int = 15,
     ) -> None:
+        """Instantiate a game loop using an existing GameServer instance."""
         self.server = server
         self.questions = questions
         self.min_players = min_players

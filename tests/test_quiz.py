@@ -1,3 +1,5 @@
+"""Test quiz related functionality."""
+
 import json
 from pathlib import Path
 
@@ -8,6 +10,7 @@ from src.quiz import load_quiz
 
 # Test valid quiz loads correctly
 def test_valid_quiz(tmp_path: Path) -> None:
+    """Test valid quiz loads correctly."""
     quiz_data = {
         "title": "Test Quiz",
         "questions": [
@@ -32,6 +35,7 @@ def test_valid_quiz(tmp_path: Path) -> None:
 
 # Missing title
 def test_missing_title(tmp_path: Path) -> None:
+    """Test missing title."""
     quiz_data: dict[str, object] = {"questions": []}
 
     file = tmp_path / "quiz.json"
@@ -43,6 +47,7 @@ def test_missing_title(tmp_path: Path) -> None:
 
 # Invalid answer index
 def test_invalid_answer(tmp_path: Path) -> None:
+    """Test invalid answer."""
     quiz_data = {
         "title": "Bad Quiz",
         "questions": [
