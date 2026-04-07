@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from protocol import (
+from src.protocol import (
     MsgType,
     UdpSendQueue,
     _recv_exactly,

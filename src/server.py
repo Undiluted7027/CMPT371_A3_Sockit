@@ -47,8 +47,12 @@ import socket
 import string
 import threading
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from protocol import MsgType, recv_msg, send_msg
+from .protocol import MsgType, recv_msg, send_msg
+
+if TYPE_CHECKING:
+    import queue as _queue
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +104,9 @@ class GameServer:
         # All successfully joined clients, keyed by display name.
         self._joined: dict[str, _ClientConn] = {}
         self._joined_lock = threading.Lock()
+
+        # Answer queue
+        self._answer_queue: _queue.Queue[tuple[str, int, int]] | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -194,6 +201,8 @@ class GameServer:
         t = msg.get("type")
         if t == MsgType.JOIN:
             self._handle_join(client, msg)
+        elif t == MsgType.ANSWER:
+            self._handle_answer(client, msg)
         else:
             # ANSWER and other game-phase messages handled in Phase 4.
             logger.debug("Unhandled message type %r from %s", t, client.addr)
@@ -270,6 +279,16 @@ class GameServer:
         )
         self._broadcast_lobby_update()
 
+    def _handle_answer(self, client: _ClientConn, msg: dict) -> None:
+        if self._answer_queue is not None and client.display_name is not None:
+            self._answer_queue.put(
+                (
+                    client.display_name,
+                    int(msg.get("question_index", -1)),
+                    int(msg.get("choice", -1)),
+                )
+            )
+
     # ------------------------------------------------------------------
     # Broadcast helpers
     # ------------------------------------------------------------------
@@ -334,6 +353,10 @@ class GameServer:
         if client is not None:
             with contextlib.suppress(OSError):
                 send_msg(client.sock, msg, lock=client.send_lock)
+
+    def set_answer_queue(self, q: "_queue.Queue[tuple[str, int, int]] | None") -> None:
+        """Public function to set answer queue for GameLoop."""
+        self._answer_queue = q
 
 
 # ---------------------------------------------------------------------------

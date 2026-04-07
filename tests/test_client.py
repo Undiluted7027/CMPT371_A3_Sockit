@@ -24,9 +24,9 @@ from typing import Any
 
 import pytest
 
-from client import GameClient
-from protocol import MsgType, recv_msg
-from server import GameServer
+from src.client import GameClient
+from src.protocol import MsgType, recv_msg
+from src.server import GameServer
 
 # ---------------------------------------------------------------------------
 # Capturing subclass
