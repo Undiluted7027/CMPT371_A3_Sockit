@@ -1,7 +1,7 @@
 """Manual smoke test for server.py Phase 2 — TCP join handshake.
 
 Run the server first:
-    python src/server.py
+    python scripts/run_server.py [PORT]
 
 Then run this script in a second terminal:
     python scripts/smoke_test_server.py <SESSION_CODE> [PORT]
@@ -26,7 +26,7 @@ import sys
 
 sys.path.insert(0, "src")
 
-from protocol import MsgType, recv_msg, send_msg  # noqa: E402
+from src.protocol import MsgType, recv_msg, send_msg  # noqa: E402
 
 HOST = "127.0.0.1"
 

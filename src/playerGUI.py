@@ -56,6 +56,7 @@ class PlayerGUI:
         self.answer_buttons: list[tk.Button] = []
         self.current_question_index: int = -1
         self._join_error_label: tk.Label | None = None
+        self._game_started: bool = False
 
         self._wire_callbacks()
         self.show_join_screen()
@@ -73,6 +74,8 @@ class PlayerGUI:
             countdown_remaining: float | None,
         ) -> None:
             def update_ui() -> None:
+                if self._game_started:
+                    return  # ignore lobby polls once the game is underway
                 if self.player_listbox is None:
                     self.show_lobby_screen()
 
@@ -220,7 +223,9 @@ class PlayerGUI:
 
     def show_game_start_screen(self) -> None:
         """Brief transition frame shown between lobby and first question."""
+        self._game_started = True
         self._join_error_label = None
+        self.player_listbox = None  # widget is about to be destroyed by _container()
         container = self._container()
         tk.Label(
             container, text="Game Starting…", bg=_BG, fg=_PURPLE, font=_FONT_XL

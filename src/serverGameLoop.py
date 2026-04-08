@@ -10,6 +10,7 @@
 import logging
 import queue as _queue
 import time
+from typing import Any
 
 from .protocol import MsgType
 from .quiz import Quiz
@@ -24,6 +25,49 @@ from .server import GameServer
 logger = logging.getLogger(__name__)
 
 
+class HostObserver:
+    """Local observer interface for the host GUI.
+
+    All callbacks are optional. The GameLoop invokes them only when a
+    ``host_observer`` is supplied, keeping existing tests and call sites
+    unchanged.
+    """
+
+    def on_game_started(self, total_questions: int) -> None:
+        """Call once immediately after GAME_START is broadcast."""
+
+    def on_question(
+        self,
+        index: int,
+        total: int,
+        text: str,
+        question_type: str,
+        options: list[str],
+        time_limit: float,
+    ) -> None:
+        """Call when a new question becomes active."""
+
+    def on_timer_tick(
+        self, question_index: int, remaining: float, answered: int, total: int
+    ) -> None:
+        """Call during the live question phase."""
+
+    def on_question_result(
+        self,
+        correct_answer: int,
+        leaderboard: list[dict[str, int | str]],
+        pause_duration: int,
+        show_correct_answer: bool,
+        show_leaderboard: bool,
+    ) -> None:
+        """Call once after scores are calculated for a question."""
+
+    def on_game_over(
+        self, final_rankings: list[dict[str, int | float | str]], total_questions: int
+    ) -> None:
+        """Call when the game is complete."""
+
+
 class GameLoop:
     """Manages the game loop using an existing GameServer instance."""
 
@@ -34,6 +78,7 @@ class GameLoop:
         min_players: int = 2,
         lobby_countdown: int = 10,
         question_time: int = 15,
+        host_observer: HostObserver | None = None,
     ) -> None:
         """Instantiate a game loop using an existing GameServer instance."""
         self.server = server
@@ -44,6 +89,7 @@ class GameLoop:
         self.lobby_countdown = lobby_countdown
         self.question_time = question_time
         self.player_stats: dict[str, PlayerGameStats] = {}
+        self.host_observer = host_observer
         self.running = False
 
     def start(self) -> None:
@@ -89,6 +135,7 @@ class GameLoop:
         players = self.server.get_players()
         self.player_stats = {name: PlayerGameStats(name=name) for name in players}
         self.server.broadcast({"type": MsgType.GAME_START})
+        self._notify_observer("on_game_started", len(self.questions))
         logger.info("Game started with players: %s", players)
 
     # ------------------------------------------------------------------
@@ -122,11 +169,20 @@ class GameLoop:
         next_tick = question_start_time
         answers: dict[str, tuple[int, float]] = {}
         expected = set(players)
+        current_answered = 0
         try:
             while time.monotonic() < deadline and len(answers) < len(expected):
                 now = time.monotonic()
                 if now >= next_tick:
-                    self.server.broadcast_timer_tick(q_index, max(0.0, deadline - now))
+                    remaining_now = max(0.0, deadline - now)
+                    self.server.broadcast_timer_tick(q_index, remaining_now)
+                    self._notify_observer(
+                        "on_timer_tick",
+                        q_index,
+                        remaining_now,
+                        current_answered,
+                        len(expected),
+                    )
                     next_tick = now + 0.1
 
                 remaining = deadline - now
@@ -139,8 +195,16 @@ class GameLoop:
                     )
                     if idx == q_index and name in expected and name not in answers:
                         answers[name] = (choice, receive_time)
+                        current_answered = len(answers)
                         self.server.broadcast_answer_count(
-                            q_index, answered=len(answers), total=len(expected)
+                            q_index, answered=current_answered, total=len(expected)
+                        )
+                        self._notify_observer(
+                            "on_timer_tick",
+                            q_index,
+                            max(0.0, deadline - receive_time),
+                            current_answered,
+                            len(expected),
                         )
                 except _queue.Empty:
                     pass
@@ -148,6 +212,9 @@ class GameLoop:
             self.server.set_answer_queue(None)
 
         self.server.broadcast_timer_tick(q_index, 0.0)
+        self._notify_observer(
+            "on_timer_tick", q_index, 0.0, current_answered, len(expected)
+        )
         return answers
 
     def _run_questions(self) -> None:
@@ -169,6 +236,15 @@ class GameLoop:
             players_at_start = self.server.get_players()
             logger.info("Sending Q%d: %s", q_index + 1, question.text)
             question_start_time = time.monotonic()
+            self._notify_observer(
+                "on_question",
+                q_index,
+                len(self.questions),
+                question.text,
+                question.question_type,
+                question.options,
+                question.time_limit,
+            )
 
             self.server.broadcast(
                 {
@@ -217,8 +293,18 @@ class GameLoop:
                 question_results[player] = (result.score, result.streak)
 
             leaderboard = build_leaderboard(self.player_stats)
+            self._notify_observer(
+                "on_question_result",
+                question.answer,
+                leaderboard,
+                pause_duration,
+                show_correct,
+                show_lb,
+            )
 
             for player in players_at_start:
+                if player not in self.player_stats:
+                    continue  # joined after game start - no stats, no result to send
                 your_score, your_streak = question_results[player]
                 self.server.send_to(
                     player,
@@ -250,4 +336,13 @@ class GameLoop:
                 "total_questions": len(self.questions),
             }
         )
+        self._notify_observer("on_game_over", final_rankings, len(self.questions))
         logger.info("Game over")
+
+    def _notify_observer(self, method: str, *args: Any) -> None:
+        """Call one observer method if a host observer is attached."""
+        if self.host_observer is None:
+            return
+        callback = getattr(self.host_observer, method, None)
+        if callback is not None:
+            callback(*args)

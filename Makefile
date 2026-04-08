@@ -14,11 +14,11 @@ fmt:
 format: fmt
 
 typecheck:
-	.venv/bin/mypy --ignore-missing-imports --follow-imports=silent --show-column-numbers --warn-return-any --warn-unused-configs --disallow-untyped-defs --disallow-untyped-calls --no-implicit-optional --check-untyped-defs --pretty src tests
+	.venv/bin/mypy --ignore-missing-imports --follow-imports=silent --show-column-numbers --warn-return-any --warn-unused-configs --disallow-untyped-defs --disallow-untyped-calls --no-implicit-optional --check-untyped-defs --pretty src scripts tests
 
 check:
 	.venv/bin/ruff check .
-	.venv/bin/mypy --warn-return-any --warn-unused-configs --disallow-untyped-defs --no-implicit-optional --check-untyped-defs --pretty src tests
+	.venv/bin/mypy --warn-return-any --warn-unused-configs --disallow-untyped-defs --no-implicit-optional --check-untyped-defs --pretty src scripts tests
 	.venv/bin/pytest
 
 pre-commit-install:

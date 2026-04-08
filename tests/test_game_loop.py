@@ -20,7 +20,7 @@ import pytest
 from src.protocol import MsgType, recv_msg, recv_udp, send_msg, send_udp
 from src.quiz import Quiz, load_quiz
 from src.server import GameServer
-from src.serverGameLoop import GameLoop
+from src.serverGameLoop import GameLoop, HostObserver
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -417,5 +417,126 @@ class TestGameLoop:
         assert msg["total"] == 2
 
         alice_udp.close()
+        alice.close()
+        bob.close()
+
+    def test_game_loop_observer_receives_question_result_and_game_over(
+        self, server: GameServer, tmp_path: Path
+    ) -> None:
+        """An attached host observer receives question/result/final callbacks."""
+
+        class RecordingObserver(HostObserver):
+            def __init__(self) -> None:
+                self.started_total_questions = 0
+                self.questions: list[tuple[int, int, str, str, list[str], float]] = []
+                self.results: list[
+                    tuple[int, list[dict[str, int | str]], int, bool, bool]
+                ] = []
+                self.final: tuple[list[dict[str, int | float | str]], int] | None = None
+
+            def on_game_started(self, total_questions: int) -> None:
+                self.started_total_questions = total_questions
+
+            def on_question(
+                self,
+                index: int,
+                total: int,
+                text: str,
+                question_type: str,
+                options: list[str],
+                time_limit: float,
+            ) -> None:
+                self.questions.append(
+                    (index, total, text, question_type, options, time_limit)
+                )
+
+            def on_question_result(
+                self,
+                correct_answer: int,
+                leaderboard: list[dict[str, int | str]],
+                pause_duration: int,
+                show_correct_answer: bool,
+                show_leaderboard: bool,
+            ) -> None:
+                self.results.append(
+                    (
+                        correct_answer,
+                        leaderboard,
+                        pause_duration,
+                        show_correct_answer,
+                        show_leaderboard,
+                    )
+                )
+
+            def on_game_over(
+                self,
+                final_rankings: list[dict[str, int | float | str]],
+                total_questions: int,
+            ) -> None:
+                self.final = (final_rankings, total_questions)
+
+        quiz = _make_quiz(tmp_path)
+        observer = RecordingObserver()
+        alice = _join_player(server.port, server.session_code, "Alice")
+        bob = _join_player(server.port, server.session_code, "Bob")
+        recv_msg(alice)
+
+        loop = GameLoop(
+            server, quiz, min_players=2, lobby_countdown=0, host_observer=observer
+        )
+        thread = threading.Thread(target=loop.start, daemon=True)
+        thread.start()
+
+        _read_until(alice, MsgType.GAME_OVER)
+        thread.join(timeout=5)
+
+        assert observer.started_total_questions == 1
+        assert observer.questions[0][0] == 0
+        assert observer.questions[0][2] == "What is 2+2?"
+        assert observer.results[0][0] == 3
+        assert observer.final is not None
+        assert observer.final[1] == 1
+        assert len(observer.final[0]) == 2
+
+        alice.close()
+        bob.close()
+
+    def test_game_loop_observer_receives_live_answer_progress(
+        self, server: GameServer, tmp_path: Path
+    ) -> None:
+        """Timer observer callbacks include the current answered-count snapshot."""
+
+        class RecordingObserver(HostObserver):
+            def __init__(self) -> None:
+                self.timer_ticks: list[tuple[int, float, int, int]] = []
+
+            def on_timer_tick(
+                self, question_index: int, remaining: float, answered: int, total: int
+            ) -> None:
+                self.timer_ticks.append((question_index, remaining, answered, total))
+
+        quiz = _make_quiz(tmp_path, time_limit=0.3)
+        observer = RecordingObserver()
+        alice = _join_player(server.port, server.session_code, "Alice")
+        bob = _join_player(server.port, server.session_code, "Bob")
+        recv_msg(alice)
+
+        loop = GameLoop(
+            server, quiz, min_players=2, lobby_countdown=0, host_observer=observer
+        )
+        thread = threading.Thread(target=loop.start, daemon=True)
+        thread.start()
+
+        _read_until(alice, MsgType.QUESTION)
+        _read_until(bob, MsgType.QUESTION)
+        send_msg(alice, {"type": MsgType.ANSWER, "question_index": 0, "choice": 3})
+        _read_until(alice, MsgType.GAME_OVER)
+        thread.join(timeout=5)
+
+        assert any(
+            answered == 1 and total == 2
+            for _, _, answered, total in observer.timer_ticks
+        )
+
         alice.close()
         bob.close()
