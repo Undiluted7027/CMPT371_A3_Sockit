@@ -58,7 +58,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_PLAYERS = 10
-DEFAULT_PORT = 5000
+DEFAULT_PORT = 5001  # 5000 is claimed by macOS AirPlay Receiver
 
 
 # ---------------------------------------------------------------------------

@@ -20,4 +20,4 @@ repos:
         entry: .venv/bin/mypy
         language: system
         pass_filenames: false
-        args: [src, tests]
+        args: [src, tests, scripts]

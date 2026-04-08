@@ -1,0 +1,87 @@
+{
+  "title": "General Knowledge Mixer",
+  "description": "A mix of science, geography, history, and pop culture — good for demo sessions.",
+  "settings": {
+    "default_time_limit": 20,
+    "show_correct_answer": true,
+    "show_leaderboard": true,
+    "pause_between_questions": 5
+  },
+  "questions": [
+    {
+      "text": "What is the powerhouse of the cell?",
+      "type": "multiple_choice",
+      "options": ["Nucleus", "Ribosome", "Mitochondria", "Golgi apparatus"],
+      "answer": 2,
+      "time_limit": 15
+    },
+    {
+      "text": "Which planet is closest to the Sun?",
+      "type": "multiple_choice",
+      "options": ["Venus", "Earth", "Mars", "Mercury"],
+      "answer": 3,
+      "time_limit": 15
+    },
+    {
+      "text": "The Great Wall of China is visible from space with the naked eye.",
+      "type": "true_false",
+      "options": ["True", "False"],
+      "answer": 1,
+      "time_limit": 10
+    },
+    {
+      "text": "What is the capital of Canada?",
+      "type": "multiple_choice",
+      "options": ["Toronto", "Vancouver", "Ottawa", "Montreal"],
+      "answer": 2,
+      "time_limit": 20
+    },
+    {
+      "text": "How many bones are in the adult human body?",
+      "type": "multiple_choice",
+      "options": ["186", "206", "226", "246"],
+      "answer": 1,
+      "time_limit": 20
+    },
+    {
+      "text": "Python was created by Guido van Rossum.",
+      "type": "true_false",
+      "options": ["True", "False"],
+      "answer": 0,
+      "time_limit": 10
+    },
+    {
+      "text": "Which of these is NOT a programming language?",
+      "type": "multiple_choice",
+      "options": ["Rust", "Kotlin", "Cobalt", "Haskell"],
+      "answer": 2,
+      "time_limit": 20
+    },
+    {
+      "text": "What does HTTP stand for?",
+      "type": "multiple_choice",
+      "options": [
+        "HyperText Transfer Protocol",
+        "High Transfer Text Protocol",
+        "HyperText Transmission Process",
+        "Hosted Text Transfer Protocol"
+      ],
+      "answer": 0,
+      "time_limit": 15
+    },
+    {
+      "text": "Mount Everest is located in the Alps.",
+      "type": "true_false",
+      "options": ["True", "False"],
+      "answer": 1,
+      "time_limit": 10
+    },
+    {
+      "text": "Which data structure operates on a LIFO (Last In, First Out) principle?",
+      "type": "multiple_choice",
+      "options": ["Queue", "Stack", "Linked list", "Heap"],
+      "answer": 1,
+      "time_limit": 20
+    }
+  ]
+}
