@@ -280,6 +280,31 @@ class TestDisconnect:
         assert "Alice" not in update["players"]
         assert "Bob" in update["players"]
 
+    def test_joined_client_disconnect_sends_player_disconnected(
+        self, server: GameServer
+    ) -> None:
+        """Remaining players receive PLAYER_DISCONNECTED after a peer leaves.
+
+        The server sends LOBBY_UPDATE first, then PLAYER_DISCONNECTED.  Bob reads
+        both and we assert that the second message names Alice as the leaver.
+        """
+        alice = _connect(server.port)
+        _join(alice, server.session_code, "Alice")
+
+        bob = _connect(server.port)
+        _join(bob, server.session_code, "Bob")
+        recv_msg(alice)  # drain Alice's lobby_update from Bob's join
+
+        alice.close()  # Alice disconnects
+
+        lobby_msg = recv_msg(bob)  # first: LOBBY_UPDATE
+        disconnected_msg = recv_msg(bob)  # second: PLAYER_DISCONNECTED
+        bob.close()
+
+        assert lobby_msg["type"] == MsgType.LOBBY_UPDATE
+        assert disconnected_msg["type"] == MsgType.PLAYER_DISCONNECTED
+        assert disconnected_msg["display_name"] == "Alice"
+
     def test_unjoined_client_disconnect_sends_no_broadcast(
         self, server: GameServer
     ) -> None:

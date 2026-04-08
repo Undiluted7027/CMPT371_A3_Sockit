@@ -1,5 +1,6 @@
 """Player GUI - handles the player's view of the game."""
 
+import platform
 import tkinter as tk
 from collections.abc import Callable
 from tkinter import messagebox
@@ -22,11 +23,14 @@ _MUTED = "#6e6e73"
 _DISABLED_BG = "#d1d1d6"
 _DISABLED_FG = "#8e8e93"
 
-_FONT = ("Helvetica Neue", 12)
-_FONT_BOLD = ("Helvetica Neue", 12, "bold")
-_FONT_LG = ("Helvetica Neue", 16, "bold")
-_FONT_XL = ("Helvetica Neue", 22, "bold")
-_FONT_SM = ("Helvetica Neue", 10)
+_SANS = {"Darwin": "Helvetica Neue", "Windows": "Segoe UI"}.get(
+    platform.system(), "DejaVu Sans"
+)
+_FONT = (_SANS, 12)
+_FONT_BOLD = (_SANS, 12, "bold")
+_FONT_LG = (_SANS, 16, "bold")
+_FONT_XL = (_SANS, 22, "bold")
+_FONT_SM = (_SANS, 10)
 
 
 def _card(parent: tk.Widget, **kw: object) -> tk.Frame:
@@ -171,7 +175,17 @@ class PlayerGUI:
             tk.Label(
                 card, text=label, bg=_CARD, fg=_MUTED, font=_FONT, anchor="w"
             ).grid(row=row, column=0, sticky="w", pady=(6, 0))
-            entry = tk.Entry(card, font=_FONT, width=28, relief="solid", bd=1)
+            entry = tk.Entry(
+                card,
+                font=_FONT,
+                width=28,
+                relief="solid",
+                bd=1,
+                bg=_CARD,
+                fg=_TEXT,
+                insertbackground=_TEXT,
+                highlightbackground=_CARD,
+            )
             entry.insert(0, default)
             entry.grid(row=row, column=1, sticky="ew", padx=(10, 0), pady=(6, 0))
             return entry
@@ -217,6 +231,7 @@ class PlayerGUI:
             activebackground="#0077ed",
             activeforeground="white",
             relief="flat",
+            highlightbackground=_BLUE,
             padx=20,
             pady=8,
         ).pack(pady=(16, 0))
@@ -250,6 +265,8 @@ class PlayerGUI:
             card,
             font=_FONT,
             height=8,
+            bg=_CARD,
+            fg=_TEXT,
             relief="solid",
             bd=1,
             selectbackground=_PURPLE,
@@ -317,6 +334,7 @@ class PlayerGUI:
                 activebackground=colour,
                 activeforeground="white",
                 relief="flat",
+                highlightbackground=colour,
                 padx=12,
                 pady=10,
                 wraplength=360,
@@ -438,6 +456,7 @@ class PlayerGUI:
             fg="white",
             activebackground="#555",
             relief="flat",
+            highlightbackground=_MUTED,
             padx=16,
             pady=8,
         ).pack(pady=(16, 0))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import platform
 import socket
 import threading
 import tkinter as tk
@@ -30,10 +31,13 @@ _MUTED = "#6e6e73"  # secondary / label text
 _DISABLED_BG = "#d1d1d6"
 _DISABLED_FG = "#8e8e93"
 
-_FONT = ("Helvetica Neue", 12)
-_FONT_BOLD = ("Helvetica Neue", 12, "bold")
-_FONT_SM = ("Helvetica Neue", 10)
-_FONT_CODE = ("Courier New", 30, "bold")  # big session code
+_SANS = {"Darwin": "Helvetica Neue", "Windows": "Segoe UI"}.get(
+    platform.system(), "DejaVu Sans"
+)
+_FONT = (_SANS, 12)
+_FONT_BOLD = (_SANS, 12, "bold")
+_FONT_SM = (_SANS, 10)
+_FONT_CODE = ("Courier New", 30, "bold")  # big session code — Courier is cross-platform
 
 
 class HostGUI(HostObserver):
@@ -119,9 +123,16 @@ class HostGUI(HostObserver):
         tk.Label(launch, text="Quiz file", bg=_CARD, fg=_MUTED, font=_FONT).grid(
             row=0, column=0, sticky="w"
         )
-        tk.Entry(launch, textvariable=self.quiz_path_var, width=48, font=_FONT).grid(
-            row=0, column=1, sticky="ew", padx=(8, 8)
-        )
+        tk.Entry(
+            launch,
+            textvariable=self.quiz_path_var,
+            width=48,
+            font=_FONT,
+            bg=_CARD,
+            fg=_TEXT,
+            insertbackground=_TEXT,
+            highlightbackground=_CARD,
+        ).grid(row=0, column=1, sticky="ew", padx=(8, 8))
         tk.Button(
             launch,
             text="Browse…",
@@ -131,6 +142,7 @@ class HostGUI(HostObserver):
             fg=_TEXT,
             relief="flat",
             activebackground="#d1d1d6",
+            highlightbackground="#e5e5ea",
             padx=8,
         ).grid(row=0, column=2, sticky="ew")
         tk.Button(
@@ -142,20 +154,37 @@ class HostGUI(HostObserver):
             fg=_TEXT,
             relief="flat",
             activebackground="#d1d1d6",
+            highlightbackground="#e5e5ea",
             padx=8,
         ).grid(row=0, column=3, sticky="ew", padx=(6, 0))
 
         tk.Label(launch, text="Bind host", bg=_CARD, fg=_MUTED, font=_FONT).grid(
             row=1, column=0, sticky="w", pady=(10, 0)
         )
-        self.host_entry = tk.Entry(launch, width=20, font=_FONT)
+        self.host_entry = tk.Entry(
+            launch,
+            width=20,
+            font=_FONT,
+            bg=_CARD,
+            fg=_TEXT,
+            insertbackground=_TEXT,
+            highlightbackground=_CARD,
+        )
         self.host_entry.grid(row=1, column=1, sticky="w", pady=(10, 0), padx=(8, 8))
         self.host_entry.insert(0, self.bind_host)
 
         tk.Label(launch, text="Port", bg=_CARD, fg=_MUTED, font=_FONT).grid(
             row=1, column=2, sticky="w", pady=(10, 0)
         )
-        self.port_entry = tk.Entry(launch, width=8, font=_FONT)
+        self.port_entry = tk.Entry(
+            launch,
+            width=8,
+            font=_FONT,
+            bg=_CARD,
+            fg=_TEXT,
+            insertbackground=_TEXT,
+            highlightbackground=_CARD,
+        )
         self.port_entry.grid(row=1, column=3, sticky="w", pady=(10, 0))
         self.port_entry.insert(0, str(self.port))
 
@@ -169,6 +198,7 @@ class HostGUI(HostObserver):
             activebackground="#0077ed",
             activeforeground="white",
             relief="flat",
+            highlightbackground=_BLUE,
             padx=12,
             pady=7,
         )
@@ -224,6 +254,8 @@ class HostGUI(HostObserver):
             height=6,
             exportselection=False,
             font=_FONT,
+            bg=_CARD,
+            fg=_TEXT,
             relief="solid",
             bd=1,
             selectbackground=_PURPLE,
@@ -240,6 +272,7 @@ class HostGUI(HostObserver):
             bg=_DISABLED_BG,
             fg=_DISABLED_FG,
             relief="flat",
+            highlightbackground=_DISABLED_BG,
             padx=12,
             pady=8,
         )
@@ -310,6 +343,8 @@ class HostGUI(HostObserver):
             height=5,
             exportselection=False,
             font=_FONT,
+            bg=_CARD,
+            fg=_TEXT,
             relief="solid",
             bd=1,
             selectbackground=_PURPLE,
@@ -325,6 +360,8 @@ class HostGUI(HostObserver):
             height=8,
             exportselection=False,
             font=_FONT,
+            bg=_CARD,
+            fg=_TEXT,
             relief="solid",
             bd=1,
             selectbackground=_PURPLE,
@@ -644,12 +681,14 @@ class HostGUI(HostObserver):
                 fg="white",
                 activebackground="#1e6e09",
                 activeforeground="white",
+                highlightbackground=_GREEN,
             )
         else:
             self.start_button.configure(
                 state="disabled",
                 bg=_DISABLED_BG,
                 fg=_DISABLED_FG,
+                highlightbackground=_DISABLED_BG,
             )
 
     @staticmethod
