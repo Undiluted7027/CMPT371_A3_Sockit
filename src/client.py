@@ -1,6 +1,6 @@
-"""client.py — TCP (and later UDP) client for Sockit Trivia.
+"""client.py — TCP (and later UDP) client for BrainZap Trivia.
 
-CMPT 371 A3: Sockit - Trivia Game
+CMPT 371 A3: BrainZap - Trivia Game
 Architecture: Client-Server, TCP + UDP hybrid
 Reference:    reference/protocol-foundation.md
 Ownership:    Sanchit (Phase 2: scaffold); Praneet (Phase 2 Task 4 + Phase 3+)
@@ -34,17 +34,25 @@ Threading model
                            always use widget.after(0, fn) to schedule on main thread
 """
 
+from __future__ import annotations
+
 import logging
 import socket
 import threading
+from typing import TYPE_CHECKING
 
 from .protocol import MsgType, recv_msg, send_msg
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from src.playerGUI import PlayerGUI
 
 logger = logging.getLogger(__name__)
 
 
 class GameClient:
-    """Manages the TCP connection from a player to the Sockit game server.
+    """Manages the TCP connection from a player to the BrainZap game server.
 
     Usage::
 
@@ -61,10 +69,31 @@ class GameClient:
     widget.
     """
 
+    question_callback: Callable[[str, list[str], int, float], None]
+
     def __init__(self) -> None:
         """Instantiate a GameClient to manage the TCP connection."""
         self._sock: socket.socket | None = None
         self._connected = False
+        self.gui: PlayerGUI | None = None  # Set by PlayerGUI after instantiation
+
+        def default_question(
+            question_text: str,
+            options: list[str],
+            question_index: int,
+            time_limit: float,
+        ) -> None:
+            logger.debug(
+                "QUESTION index=%d text=%r options=%r time=%s",
+                question_index,
+                question_text,
+                options,
+                time_limit,
+            )
+
+        self.question_callback: Callable[[str, list[str], int, float], None] = (
+            default_question
+        )
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -159,9 +188,9 @@ class GameClient:
 
         if t == MsgType.LOBBY_UPDATE:
             self.on_lobby_update(
-                players=msg["players"],
-                host_started_countdown=msg["host_started_countdown"],
-                countdown_remaining=msg["countdown_remaining"],
+                msg["players"],
+                msg["host_started_countdown"],
+                msg["countdown_remaining"],
             )
         elif t == MsgType.GAME_START:
             self.on_game_start()
@@ -174,7 +203,7 @@ class GameClient:
         elif t == MsgType.PLAYER_DISCONNECTED:
             self.on_player_disconnected(display_name=msg["display_name"])
         elif t == MsgType.ERROR:
-            self.on_error(message=msg["message"])
+            self.on_error(msg["message"])
         else:
             logger.debug("Unknown message type: %r", t)
 
@@ -184,137 +213,78 @@ class GameClient:
     # IMPORTANT: all on_* methods run on the TCP receiver thread.
     # Never call Tkinter APIs directly here — schedule via widget.after(0, fn).
 
-    def on_lobby_update(
-        self,
-        players: list,
-        host_started_countdown: bool,
-        countdown_remaining: float | None,
-    ) -> None:
-        """Server sent an updated lobby state.
-
-        Args:
-            players:                 Current list of joined display names.
-            host_started_countdown:  True when the host has triggered auto-start.
-            countdown_remaining:     Seconds left in the countdown (float), or None.
-
-        TODO (Praneet — Task 4 / Task 10):
-            Wire to the lobby screen in player_gui.py:
-              - Refresh the player list widget with `players`
-              - If host_started_countdown is True and countdown_remaining is not
-                None, show the countdown timer; hide it otherwise
-            Example:
-                def on_lobby_update(self, players, host_started_countdown,
-                                    countdown_remaining):
-                    self._root.after(0, lambda: self._gui.update_lobby(
-                        players, host_started_countdown, countdown_remaining))
-
-        """
-
     def on_game_start(self) -> None:
         """Server signalled that the game is starting.
 
         The server will immediately follow this with a `question` message.
         Transition the GUI to a "loading question" state and wait.
-
-        TODO (Praneet — Task 11):
-            Transition player_gui.py from the lobby frame to the question frame.
         """
+        if self.gui is None:
+            return
+        self.gui.root.after(0, self.gui.show_game_start_screen)
 
     def on_question(self, msg: dict) -> None:
-        """Server delivered a new question.
+        """Server delivered a new question."""
+        if self.gui is None:
+            return
 
-        Args:
-            msg: {
-                "index":         int   — 0-based question number,
-                "text":          str   — question text,
-                "question_type": str   — "multiple_choice" or "true_false",
-                "options":       list  — answer option strings,
-                "time_limit":    int   — seconds for this question,
-            }
+        question_text: str = msg.get("text", "")
+        options: list[str] = msg.get("options", [])
+        question_index: int = msg.get("index", 0)
+        time_limit: float = float(msg.get("time_limit", 20))
 
-        TODO (Praneet — Task 11):
-            Render the question screen in player_gui.py:
-              - Display question text and answer buttons (4 for MC, 2 for T/F)
-              - Start the client-side countdown display (authoritative timer via UDP)
-              - Store msg["index"] so send_answer() can reference it
-
-        """
+        self.question_callback(question_text, options, question_index, time_limit)
 
     def on_question_result(self, msg: dict) -> None:
-        """Server sent post-question results.
-
-        Args:
-            msg: {
-                "correct_answer":      int   — 0-based index into options,
-                "your_score":          int   — points earned this question,
-                "your_total":          int   — cumulative score,
-                "your_streak":         int   — consecutive correct answers,
-                "leaderboard":         list  — [{"name": str, "score": int}, ...],
-                "show_correct_answer": bool,
-                "show_leaderboard":    bool,
-                "pause_duration":      int   — seconds to show this screen,
-            }
-
-        TODO (Praneet — Task 12):
-            Render the results screen in player_gui.py. Respect show_correct_answer
-            and show_leaderboard flags — do not display those elements if False.
-
-        """
+        """Server sent post-question results."""
+        if self.gui is None:
+            return
+        gui = self.gui
+        gui.root.after(
+            0,
+            lambda: gui.show_results_screen(
+                correct_index=msg.get("correct_answer", -1),
+                your_score=msg.get("your_score", 0),
+                your_total=msg.get("your_total", 0),
+                leaderboard=msg.get("leaderboard"),
+            ),
+        )
 
     def on_game_over(self, msg: dict) -> None:
-        """Server sent the final game-over summary.
-
-        Args:
-            msg: {
-                "final_rankings": list — [
-                    {"rank": int, "name": str, "score": int,
-                     "correct": int, "streak": int, "fastest_answer": float},
-                    ...
-                ],
-                "total_questions": int,
-            }
-
-        TODO (Praneet — Task 13):
-            Render the game-over screen in player_gui.py.
-            Use total_questions to display "correct: X / total_questions".
-
-        """
+        """Server sent the final game-over summary."""
+        if self.gui is None:
+            return
+        gui = self.gui
+        gui.root.after(
+            0,
+            lambda: gui.show_game_over_screen(
+                final_rankings=msg.get("final_rankings", []),
+                total_questions=msg.get("total_questions", 0),
+            ),
+        )
 
     def on_player_disconnected(self, display_name: str) -> None:
-        """Another player disconnected during an active game.
+        """Another player disconnected during an active game."""
+        if self.gui is None:
+            return
+        self.gui.root.after(
+            0,
+            lambda: self.gui.show_player_disconnected(display_name),  # type: ignore[union-attr]
+        )
 
-        Args:
-            display_name: The name of the player who left.
-
-        TODO (Praneet — Task 11 / Phase 6):
-            Show a brief notification on the question or results screen, e.g.
-            "{display_name} disconnected".
-
-        """
+    def on_lobby_update(
+        self,
+        players: list[str],
+        host_started_countdown: bool,
+        countdown_remaining: float | None,
+    ) -> None:
+        """Server sent an updated lobby state. Override or monkey-patch to handle."""
 
     def on_error(self, message: str) -> None:
-        """Server rejected the last request.
-
-        The connection stays open — the player can send another join request
-        with corrected input without reconnecting.
-
-        Args:
-            message: Human-readable error string from the server, e.g.
-                     "Invalid session code" or "Name 'Alice' is already taken".
-
-        TODO (Praneet — Task 4 / Task 9):
-            Show the error message on the join screen in player_gui.py so the
-            player can correct their input and retry.
-
-        """
+        """Server rejected the last request. Override or monkey-patch to handle."""
 
     def on_disconnect(self) -> None:
-        """Handle the server closing the connection unexpectedly.
-
-        TODO (Praneet — Task 4 / Phase 6):
-            Show a disconnection notice in player_gui.py and offer a reconnect
-            button or auto-retry logic.
-        """
+        """Server closed the connection unexpectedly. Override or monkey-patch to handle."""
 
     # ------------------------------------------------------------------
     # Outbound messages
@@ -327,10 +297,6 @@ class GameClient:
             question_index: The 0-based index of the current question.
                             Store this from the most recent on_question call.
             choice:         0-based index into the question's options array.
-
-        TODO (Praneet — Task 11):
-            Call this from the answer button handler in player_gui.py.
-            Disable the answer buttons after sending to prevent double-submit.
 
         """
         if not self._connected or self._sock is None:

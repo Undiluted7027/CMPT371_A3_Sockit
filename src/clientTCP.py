@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ClientTCP:
-    """TCP client for connecting to the Sockit trivia server.
+    """TCP client for connecting to the BrainZap trivia server.
 
     Handles connecting, sending join/answer messages, and dispatching all
     incoming server messages to typed on_* handlers.

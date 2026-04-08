@@ -1,4 +1,4 @@
-# CMPT 371 A3 Socket programming `Sockit`
+# CMPT 371 A3 Socket programming `BrainZap`
 
 **Course:** CMPT 371 \- Data Communications & Networking
 **Instructor:** Mirza Zaeem Baig

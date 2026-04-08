@@ -1,4 +1,4 @@
-# Sockit: Trivia Quiz Game (Kahoot-Style)
+# BrainZap: Trivia Quiz Game (Kahoot-Style)
 
 ## What is it?
 

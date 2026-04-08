@@ -1,4 +1,4 @@
-"""protocol.py — Shared message protocol for Sockit Trivia.
+"""protocol.py — Shared message protocol for BrainZap Trivia.
 
 This module is the contract between server and client. Every other module imports
 from here. Nothing in this file knows about game logic — it only handles message
