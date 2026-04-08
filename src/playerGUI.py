@@ -4,7 +4,34 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import messagebox
 
-from src.client import GameClient
+from .client import GameClient
+from .server import DEFAULT_PORT
+
+# ---------------------------------------------------------------------------
+# Visual theme — mirrors host_gui.py palette
+# ---------------------------------------------------------------------------
+
+_BG = "#f5f5f7"
+_CARD = "#ffffff"
+_PURPLE = "#46178f"
+_GREEN = "#26890c"
+_BLUE = "#0071e3"
+_RED = "#d70015"
+_TEXT = "#1d1d1f"
+_MUTED = "#6e6e73"
+_DISABLED_BG = "#d1d1d6"
+_DISABLED_FG = "#8e8e93"
+
+_FONT = ("Helvetica Neue", 12)
+_FONT_BOLD = ("Helvetica Neue", 12, "bold")
+_FONT_LG = ("Helvetica Neue", 16, "bold")
+_FONT_XL = ("Helvetica Neue", 22, "bold")
+_FONT_SM = ("Helvetica Neue", 10)
+
+
+def _card(parent: tk.Widget, **kw: object) -> tk.Frame:
+    """Return a white card frame with consistent padding."""
+    return tk.Frame(parent, bg=_CARD, padx=16, pady=14, **kw)  # type: ignore[arg-type]
 
 
 class PlayerGUI:
@@ -14,13 +41,13 @@ class PlayerGUI:
         """Initialize the GUI and client."""
         self.root = tk.Tk()
         self.root.title("BrainZap - Player")
+        self.root.configure(bg=_BG)
+        self.root.minsize(480, 400)
 
         self.client = GameClient()
 
-        # Store current frame
+        # Widget references (populated by show_* methods)
         self.current_frame: tk.Frame | None = None
-
-        # Widget references (populated by show_lobby_screen / show_question_screen)
         self.player_listbox: tk.Listbox | None = None
         self.status_label: tk.Label | None = None
         self.countdown_label: tk.Label | None = None
@@ -28,11 +55,9 @@ class PlayerGUI:
         self.timer_label: tk.Label | None = None
         self.answer_buttons: list[tk.Button] = []
         self.current_question_index: int = -1
+        self._join_error_label: tk.Label | None = None
 
-        # Wire callbacks before showing first screen
         self._wire_callbacks()
-
-        # Start with join screen
         self.show_join_screen()
 
     # ------------------------------------------------------------------
@@ -40,29 +65,24 @@ class PlayerGUI:
     # ------------------------------------------------------------------
 
     def _wire_callbacks(self) -> None:
-        """Hook GameClient callbacks to the GUI."""
+        """Hooks GameClient callbacks to the GUI."""
 
         def handle_lobby_update(
             players: list[str],
             host_started_countdown: bool,
             countdown_remaining: float | None,
         ) -> None:
-            """Handle lobby updates from server and refresh the lobby screen UI."""
-
             def update_ui() -> None:
-                # First time receiving lobby update — switch to lobby screen
                 if self.player_listbox is None:
                     self.show_lobby_screen()
 
                 assert self.player_listbox is not None
                 assert self.status_label is not None
 
-                # Update player list
                 self.player_listbox.delete(0, tk.END)
                 for player in players:
                     self.player_listbox.insert(tk.END, player)
 
-                # Update status and countdown
                 if host_started_countdown and countdown_remaining is not None:
                     self.status_label.config(text="Game starting soon...")
                     if self.countdown_label is not None:
@@ -70,21 +90,22 @@ class PlayerGUI:
                             text=f"Starting in {int(countdown_remaining)}s"
                         )
                 else:
-                    self.status_label.config(text="Waiting for host...")
+                    self.status_label.config(text="Waiting for host to start the game.")
                     if self.countdown_label is not None:
                         self.countdown_label.config(text="")
 
             self.root.after(0, update_ui)
 
         def handle_error(message: str) -> None:
-            """Show server error as a messagebox."""
-            self.root.after(
-                0,
-                lambda: messagebox.showerror("Error", message),
-            )
+            def update() -> None:
+                if self._join_error_label is not None:
+                    self._join_error_label.config(text=message)
+                else:
+                    messagebox.showerror("Error", message)
+
+            self.root.after(0, update)
 
         def handle_disconnect() -> None:
-            """Show reconnect notice on disconnect."""
             self.root.after(
                 0,
                 lambda: messagebox.showerror(
@@ -98,7 +119,6 @@ class PlayerGUI:
             question_index: int,
             time_limit: float,
         ) -> None:
-            """Show question screen when server sends a new question."""
             self.root.after(
                 0,
                 lambda: self.show_question_screen(
@@ -106,81 +126,144 @@ class PlayerGUI:
                 ),
             )
 
-        # Assign to client attributes (not called as methods)
-        self.client.on_lobby_update = handle_lobby_update
-        self.client.on_error = handle_error
-        self.client.on_disconnect = handle_disconnect
+        self.client.on_lobby_update = handle_lobby_update  # type: ignore[method-assign]
+        self.client.on_error = handle_error  # type: ignore[method-assign]
+        self.client.on_disconnect = handle_disconnect  # type: ignore[method-assign]
         self.client.question_callback = handle_question
 
     # ------------------------------------------------------------------
-    # Screen switching
+    # Screen switching helpers
     # ------------------------------------------------------------------
 
     def clear_frame(self) -> None:
-        """Remove current frame."""
+        """Destroy the current content frame."""
         if self.current_frame is not None:
             self.current_frame.destroy()
+            self.current_frame = None
+
+    def _container(self) -> tk.Frame:
+        """Create a fresh padded container that fills the window."""
+        self.clear_frame()
+        frame = tk.Frame(self.root, bg=_BG, padx=24, pady=24)
+        frame.pack(fill="both", expand=True)
+        self.current_frame = frame
+        return frame
+
+    # ------------------------------------------------------------------
+    # Screens
+    # ------------------------------------------------------------------
 
     def show_join_screen(self) -> None:
-        """Display the join screen."""
-        self.clear_frame()
+        """Join screen: IP, port, session code, display name."""
+        container = self._container()
 
-        frame = tk.Frame(self.root, padx=20, pady=20)
-        frame.pack()
-        self.current_frame = frame
+        tk.Label(container, text="Join Game", bg=_BG, fg=_PURPLE, font=_FONT_XL).pack(
+            pady=(0, 16)
+        )
 
-        tk.Label(frame, text="Join Game", font=("Arial", 18)).pack(pady=10)
+        card = _card(container, relief="groove")
+        card.pack(fill="x")
 
-        tk.Label(frame, text="Server IP").pack()
-        ip_entry = tk.Entry(frame)
-        ip_entry.pack()
+        def _row(label: str, row: int, default: str = "") -> tk.Entry:
+            tk.Label(
+                card, text=label, bg=_CARD, fg=_MUTED, font=_FONT, anchor="w"
+            ).grid(row=row, column=0, sticky="w", pady=(6, 0))
+            entry = tk.Entry(card, font=_FONT, width=28, relief="solid", bd=1)
+            entry.insert(0, default)
+            entry.grid(row=row, column=1, sticky="ew", padx=(10, 0), pady=(6, 0))
+            return entry
 
-        tk.Label(frame, text="Session Code").pack()
-        code_entry = tk.Entry(frame)
-        code_entry.pack()
+        ip_entry = _row("Server IP", 0, "127.0.0.1")
+        port_entry = _row("Port", 1, str(DEFAULT_PORT))
+        code_entry = _row("Session Code", 2)
+        name_entry = _row("Display Name", 3)
+        card.grid_columnconfigure(1, weight=1)
 
-        tk.Label(frame, text="Display Name").pack()
-        name_entry = tk.Entry(frame)
-        name_entry.pack()
-
-        error_label = tk.Label(frame, text="", fg="red")
-        error_label.pack(pady=5)
+        error_label = tk.Label(container, text="", bg=_BG, fg=_RED, font=_FONT_SM)
+        error_label.pack(pady=(10, 0))
+        self._join_error_label = error_label
 
         def on_join() -> None:
             ip = ip_entry.get().strip()
-            code = code_entry.get().strip()
+            port_str = port_entry.get().strip()
+            code = code_entry.get().strip().upper()
             name = name_entry.get().strip()
 
             if not ip or not code or not name:
-                error_label.config(text="All fields are required")
+                error_label.config(text="All fields are required.")
+                return
+            try:
+                port = int(port_str)
+            except ValueError:
+                error_label.config(text="Port must be a number.")
                 return
 
             try:
-                self.client.connect(ip, 5000)
+                self.client.connect(ip, port)
                 self.client.join(code, name)
             except Exception as e:
                 error_label.config(text=str(e))
 
-        tk.Button(frame, text="Join", command=on_join).pack(pady=10)
+        tk.Button(
+            container,
+            text="Join",
+            command=on_join,
+            font=_FONT_BOLD,
+            bg=_BLUE,
+            fg="white",
+            activebackground="#0077ed",
+            activeforeground="white",
+            relief="flat",
+            padx=20,
+            pady=8,
+        ).pack(pady=(16, 0))
+
+    def show_game_start_screen(self) -> None:
+        """Brief transition frame shown between lobby and first question."""
+        self._join_error_label = None
+        container = self._container()
+        tk.Label(
+            container, text="Game Starting…", bg=_BG, fg=_PURPLE, font=_FONT_XL
+        ).pack(expand=True)
 
     def show_lobby_screen(self) -> None:
-        """Display the lobby screen."""
-        self.clear_frame()
+        """Show joined players in the waiting room and display the host countdown."""
+        self._join_error_label = None
+        container = self._container()
 
-        frame = tk.Frame(self.root, padx=20, pady=20)
-        frame.pack(fill="both", expand=True)
-        self.current_frame = frame
+        tk.Label(container, text="Lobby", bg=_BG, fg=_PURPLE, font=_FONT_XL).pack(
+            pady=(0, 12)
+        )
 
-        tk.Label(frame, text="Lobby", font=("Arial", 18)).pack(pady=10)
-        tk.Label(frame, text="Players:").pack()
+        card = _card(container, relief="groove")
+        card.pack(fill="both", expand=True)
 
-        self.player_listbox = tk.Listbox(frame, height=10)
-        self.player_listbox.pack(fill="both", expand=True, pady=10)
+        tk.Label(
+            card, text="Players in session:", bg=_CARD, fg=_MUTED, font=_FONT
+        ).pack(anchor="w")
+        self.player_listbox = tk.Listbox(
+            card,
+            font=_FONT,
+            height=8,
+            relief="solid",
+            bd=1,
+            selectbackground=_PURPLE,
+            selectforeground="white",
+        )
+        self.player_listbox.pack(fill="both", expand=True, pady=(6, 0))
 
-        self.status_label = tk.Label(frame, text="Waiting for host...")
-        self.status_label.pack(pady=5)
+        self.status_label = tk.Label(
+            card,
+            text="Waiting for host to start the game.",
+            bg=_CARD,
+            fg=_MUTED,
+            font=_FONT,
+        )
+        self.status_label.pack(pady=(10, 0))
 
-        self.countdown_label = tk.Label(frame, text="")
+        self.countdown_label = tk.Label(
+            card, text="", bg=_CARD, fg=_PURPLE, font=_FONT_BOLD
+        )
         self.countdown_label.pack()
 
     def show_question_screen(
@@ -189,43 +272,63 @@ class PlayerGUI:
         options: list[str],
         question_index: int,
     ) -> None:
-        """Display the question screen."""
-        self.clear_frame()
-
-        frame = tk.Frame(self.root, padx=20, pady=20)
-        frame.pack(fill="both", expand=True)
-        self.current_frame = frame
-
+        """Active question with answer buttons."""
+        container = self._container()
         self.current_question_index = question_index
 
-        self.question_label = tk.Label(
-            frame, text=question_text, font=("Arial", 16), wraplength=400
-        )
-        self.question_label.pack(pady=10)
+        # Question text
+        card = _card(container, relief="groove")
+        card.pack(fill="x")
+        tk.Label(
+            card,
+            text=question_text,
+            bg=_CARD,
+            fg=_TEXT,
+            font=_FONT_LG,
+            wraplength=400,
+            justify="left",
+        ).pack(anchor="w")
 
+        # Answer buttons
+        btn_frame = tk.Frame(container, bg=_BG)
+        btn_frame.pack(fill="x", pady=(12, 0))
+
+        _COLOURS = ["#e21b3c", "#1368ce", "#d89e00", "#26890c"]
         self.answer_buttons = []
+
         for i, option in enumerate(options):
 
             def make_command(idx: int) -> Callable[[], None]:
                 return lambda: self.submit_answer(idx)
 
+            colour = _COLOURS[i % len(_COLOURS)]
             btn = tk.Button(
-                frame,
+                btn_frame,
                 text=option,
-                width=30,
                 command=make_command(i),
+                font=_FONT_BOLD,
+                bg=colour,
+                fg="white",
+                activebackground=colour,
+                activeforeground="white",
+                relief="flat",
+                padx=12,
+                pady=10,
+                wraplength=360,
+                justify="left",
             )
-
-            btn.pack(pady=5)
+            btn.pack(fill="x", pady=4)
             self.answer_buttons.append(btn)
 
-        self.timer_label = tk.Label(frame, text="")
-        self.timer_label.pack(pady=10)
+        self.timer_label = tk.Label(
+            container, text="", bg=_BG, fg=_MUTED, font=_FONT_SM
+        )
+        self.timer_label.pack(pady=(8, 0))
 
     def submit_answer(self, choice: int) -> None:
-        """Send answer to server and disable buttons."""
+        """Send answer and lock buttons to prevent double submit."""
         for btn in self.answer_buttons:
-            btn.config(state=tk.DISABLED)
+            btn.config(state=tk.DISABLED, bg=_DISABLED_BG, fg=_DISABLED_FG)
 
         try:
             self.client.send_answer(self.current_question_index, choice)
@@ -234,93 +337,112 @@ class PlayerGUI:
 
     def show_results_screen(
         self,
-        question_text: str,
-        options: list[str],
         correct_index: int,
         your_score: int,
         your_total: int,
-        leaderboard: list[dict[str, int]] | None = None,
+        leaderboard: list[dict[str, int | str]] | None = None,
     ) -> None:
-        """Display the results screen after a question is answered."""
-        self.clear_frame()
+        """Between-question results: correct answer, score, leaderboard."""
+        container = self._container()
 
-        frame = tk.Frame(self.root, padx=20, pady=20)
-        frame.pack(fill="both", expand=True)
-        self.current_frame = frame
+        tk.Label(container, text="Results", bg=_BG, fg=_PURPLE, font=_FONT_XL).pack(
+            pady=(0, 12)
+        )
 
-        # Questions
+        score_card = _card(container, relief="groove")
+        score_card.pack(fill="x")
         tk.Label(
-            frame,
-            text=f"Correct Answer: {options[correct_index]}",
-            font=("Arial", 16),
-            fg="green",
-            wraplength=400,
-        ).pack(pady=10)
+            score_card,
+            text=f"Correct answer: option {correct_index + 1}",
+            bg=_CARD,
+            fg=_GREEN,
+            font=_FONT_BOLD,
+        ).pack(anchor="w")
+        tk.Label(
+            score_card,
+            text=f"+{your_score} pts    Total: {your_total}",
+            bg=_CARD,
+            fg=_TEXT,
+            font=_FONT_LG,
+        ).pack(anchor="w", pady=(6, 0))
 
-        # Correct answer
-        if 0 <= correct_index < len(options):
+        if leaderboard:
+            lb_card = _card(container, relief="groove")
+            lb_card.pack(fill="both", expand=True, pady=(12, 0))
             tk.Label(
-                frame,
-                text=f"Correct Answer: {options[correct_index]}",
-                font=("Arial", 16),
-                fg="green",
-                wraplength=400,
-            ).pack(pady=10)
-
-        # Player Score
-        tk.Label(
-            frame,
-            text=f"Your Score: {your_score}/{your_total}",
-            font=("Arial", 16),
-            wraplength=400,
-        ).pack(pady=10)
-
-        # Leaderboard
-        if leaderboard is not None:
-            tk.Label(frame, text="Leaderboard:", font=("Arial", 14)).pack(pady=5)
-            for entry in leaderboard:
+                lb_card, text="Leaderboard", bg=_CARD, fg=_MUTED, font=_FONT_BOLD
+            ).pack(anchor="w")
+            for rank, entry in enumerate(leaderboard, start=1):
                 tk.Label(
-                    frame,
-                    text=f"{entry['display_name']}: {entry['score']} points",
-                    font=("Arial", 12),
-                    wraplength=400,
-                ).pack()
+                    lb_card,
+                    text=f"{rank}.  {entry['name']}  —  {entry['score']} pts",
+                    bg=_CARD,
+                    fg=_TEXT,
+                    font=_FONT,
+                    anchor="w",
+                ).pack(fill="x", pady=2)
 
     def show_game_over_screen(
         self,
         final_rankings: list[dict[str, int | str | float]],
         total_questions: int,
     ) -> None:
-        """Display the game over screen with final rankings."""
-        self.clear_frame()
+        """Show final rankings screen."""
+        container = self._container()
 
-        frame = tk.Frame(self.root, padx=20, pady=20)
-        frame.pack(fill="both", expand=True)
-        self.current_frame = frame
-
-        tk.Label(frame, text="Game Over", font=("Arial", 18)).pack(pady=10)
-
+        tk.Label(container, text="Game Over", bg=_BG, fg=_PURPLE, font=_FONT_XL).pack(
+            pady=(0, 4)
+        )
         tk.Label(
-            frame,
-            text=f"Total Questions: {total_questions}",
-            font=("Arial", 14),
-            wraplength=400,
-        ).pack(pady=5)
+            container,
+            text=f"{total_questions} questions played",
+            bg=_BG,
+            fg=_MUTED,
+            font=_FONT,
+        ).pack(pady=(0, 12))
 
-        tk.Label(frame, text="Final Rankings:", font=("Arial", 14)).pack(pady=5)
-        for i, entry in enumerate(final_rankings, start=1):
+        card = _card(container, relief="groove")
+        card.pack(fill="both", expand=True)
+        tk.Label(
+            card, text="Final Rankings", bg=_CARD, fg=_MUTED, font=_FONT_BOLD
+        ).pack(anchor="w", pady=(0, 8))
+
+        for entry in final_rankings:
+            fastest = entry.get("fastest_answer", 0.0)
+            fastest_str = f"{fastest:.2f}s" if fastest else "—"
             tk.Label(
-                frame,
-                text=f"{i}. {entry['display_name']} - {entry['score']} points (Avg Time: {entry['avg_time']:.2f}s)",
-                font=("Arial", 12),
-                wraplength=400,
-            ).pack()
+                card,
+                text=(
+                    f"#{entry['rank']}  {entry['name']}"
+                    f"  —  {entry['score']} pts"
+                    f"  ·  {entry['correct']} correct"
+                    f"  ·  fastest {fastest_str}"
+                ),
+                bg=_CARD,
+                fg=_TEXT,
+                font=_FONT,
+                anchor="w",
+            ).pack(fill="x", pady=3)
 
-        # Button to close GUI
-        tk.Button(frame, text="Exit", command=self.root.destroy).pack(pady=20)
+        tk.Button(
+            container,
+            text="Exit",
+            command=self.root.destroy,
+            font=_FONT_BOLD,
+            bg=_MUTED,
+            fg="white",
+            activebackground="#555",
+            relief="flat",
+            padx=16,
+            pady=8,
+        ).pack(pady=(16, 0))
+
+    def show_player_disconnected(self, display_name: str) -> None:
+        """Non-blocking notice that another player left."""
+        messagebox.showinfo("Player Left", f"{display_name} disconnected.")
 
     # ------------------------------------------------------------------
-    # Run GUI
+    # Run
     # ------------------------------------------------------------------
 
     def run(self) -> None:

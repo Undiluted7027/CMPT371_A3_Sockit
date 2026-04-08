@@ -1,6 +1,6 @@
-"""server.py — TCP game server for Sockit Trivia.
+"""server.py — TCP game server for BrainZap Trivia.
 
-CMPT 371 A3: Sockit - Trivia Game
+CMPT 371 A3: BrainZap - Trivia Game
 Architecture: Client-Server, TCP + UDP hybrid
 Reference:    reference/protocol-foundation.md
 Ownership:    Sanchit (Phase 2: Task 3 TCP skeleton; Phase 4: Task 5 Server UDP + Task 14 Host GUI)
@@ -82,7 +82,7 @@ class _ClientConn:
 
 
 class GameServer:
-    """TCP server managing one Sockit game session.
+    """TCP server managing one BrainZap game session.
 
     Typical lifecycle::
 
@@ -94,7 +94,7 @@ class GameServer:
     """
 
     def __init__(self, host: str = "0.0.0.0", port: int = DEFAULT_PORT) -> None:
-        """Instantiate a GameServer object to control TCP server managing on Sockit game session."""
+        """Instantiate a GameServer object to control TCP server managing on BrainZap game session."""
         self.host = host
         self.port = port
         self.session_code: str = _generate_session_code()

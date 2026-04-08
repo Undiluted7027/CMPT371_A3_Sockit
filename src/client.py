@@ -39,14 +39,13 @@ from __future__ import annotations
 import logging
 import socket
 import threading
-import tkinter as tk
-from collections.abc import Callable
-from tkinter import messagebox
 from typing import TYPE_CHECKING
 
 from .protocol import MsgType, recv_msg, send_msg
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.playerGUI import PlayerGUI
 
 logger = logging.getLogger(__name__)
@@ -70,9 +69,6 @@ class GameClient:
     widget.
     """
 
-    on_lobby_update: Callable[[list[str], bool, float | None], None]
-    on_error: Callable[[str], None]
-    on_disconnect: Callable[[], None]
     question_callback: Callable[[str, list[str], int, float], None]
 
     def __init__(self) -> None:
@@ -81,41 +77,20 @@ class GameClient:
         self._connected = False
         self.gui: PlayerGUI | None = None  # Set by PlayerGUI after instantiation
 
-        # Default callbacks — override after instantiation to hook into GUI
-
-        def default_lobby_update(
-            players: list[str],
-            host_started_countdown: bool,
-            countdown_remaining: float | None,
-        ) -> None:
-            print(
-                f"[LOBBY UPDATE] players={players}, "
-                f"host_started_countdown={host_started_countdown}, "
-                f"countdown_remaining={countdown_remaining}"
-            )
-
-        def default_error(message: str) -> None:
-            print(f"[ERROR] {message}")
-
-        def default_disconnect() -> None:
-            print("[DISCONNECTED] Connection to server lost")
-
         def default_question(
             question_text: str,
             options: list[str],
             question_index: int,
             time_limit: float,
         ) -> None:
-            print(
-                f"[QUESTION] {question_text} | options={options} | index={question_index} | time={time_limit}"
+            logger.debug(
+                "QUESTION index=%d text=%r options=%r time=%s",
+                question_index,
+                question_text,
+                options,
+                time_limit,
             )
 
-        self.on_lobby_update: Callable[[list[str], bool, float | None], None] = (
-            default_lobby_update
-        )
-
-        self.on_error: Callable[[str], None] = default_error
-        self.on_disconnect: Callable[[], None] = default_disconnect
         self.question_callback: Callable[[str, list[str], int, float], None] = (
             default_question
         )
@@ -246,28 +221,12 @@ class GameClient:
         """
         if self.gui is None:
             return
-        gui = self.gui
-
-        def show_loading() -> None:
-            # Clear lobby screen and show a "loading" state
-            # The server will immediately follow with on_question
-            gui.clear_frame()
-            frame = tk.Frame(gui.root, padx=20, pady=20)
-            frame.pack(fill="both", expand=True)
-            gui.current_frame = frame
-            tk.Label(
-                frame,
-                text="Game Starting...",
-                font=("Arial", 18),
-            ).pack(expand=True)
-
-        gui.root.after(0, show_loading)
+        self.gui.root.after(0, self.gui.show_game_start_screen)
 
     def on_question(self, msg: dict) -> None:
         """Server delivered a new question."""
         if self.gui is None:
             return
-        gui = self.gui
 
         question_text: str = msg.get("text", "")
         options: list[str] = msg.get("options", [])
@@ -275,15 +234,6 @@ class GameClient:
         time_limit: float = float(msg.get("time_limit", 20))
 
         self.question_callback(question_text, options, question_index, time_limit)
-
-        gui.root.after(
-            0,
-            lambda: gui.show_question_screen(
-                question_text=question_text,
-                options=options,
-                question_index=question_index,
-            ),
-        )
 
     def on_question_result(self, msg: dict) -> None:
         """Server sent post-question results."""
@@ -293,11 +243,10 @@ class GameClient:
         gui.root.after(
             0,
             lambda: gui.show_results_screen(
-                question_text=msg.get("question_text", ""),
-                options=msg.get("options", []),
                 correct_index=msg.get("correct_answer", -1),
                 your_score=msg.get("your_score", 0),
-                your_total=msg.get("your_total_score", 0),
+                your_total=msg.get("your_total", 0),
+                leaderboard=msg.get("leaderboard"),
             ),
         )
 
@@ -318,11 +267,24 @@ class GameClient:
         """Another player disconnected during an active game."""
         if self.gui is None:
             return
-        gui = self.gui
-        gui.root.after(
+        self.gui.root.after(
             0,
-            lambda: messagebox.showinfo("Player Left", f"{display_name} disconnected."),
+            lambda: self.gui.show_player_disconnected(display_name),  # type: ignore[union-attr]
         )
+
+    def on_lobby_update(
+        self,
+        players: list[str],
+        host_started_countdown: bool,
+        countdown_remaining: float | None,
+    ) -> None:
+        """Server sent an updated lobby state. Override or monkey-patch to handle."""
+
+    def on_error(self, message: str) -> None:
+        """Server rejected the last request. Override or monkey-patch to handle."""
+
+    def on_disconnect(self) -> None:
+        """Server closed the connection unexpectedly. Override or monkey-patch to handle."""
 
     # ------------------------------------------------------------------
     # Outbound messages
