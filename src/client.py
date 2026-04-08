@@ -1,30 +1,16 @@
-"""client.py — TCP (and later UDP) client for BrainZap Trivia.
+"""client.py — TCP client for BrainZap Trivia.
 
 CMPT 371 A3: BrainZap - Trivia Game
 Architecture: Client-Server, TCP + UDP hybrid
-Reference:    reference/protocol-foundation.md
-Ownership:    Sanchit (Phase 2: scaffold); Praneet (Phase 2 Task 4 + Phase 3+)
 
-Phase 2 scaffold (Sanchit — this file)
----------------------------------------
-- GameClient class with connect / join / disconnect
-- _recv_loop background thread
-- _dispatch routing all 8 server→client TCP message types
-- Stub on_* handlers with precise TODO comments for Praneet
-- send_answer stub
-
-Phase 2 Task 4 (Praneet — complete the TODOs below)
-----------------------------------------------------
-- Wire on_lobby_update and on_error to player_gui.py join/lobby screens
-- Wire on_disconnect to show a reconnect notice in the GUI
-- Test end-to-end: connect to server, join lobby, see lobby_update arrive
-
-Phase 3+ (Praneet)
-------------------
-- Wire on_game_start, on_question, on_question_result, on_game_over,
-  on_player_disconnected to the remaining GUI screens (Tasks 11-13)
-- Integrate send_answer() with the answer button in the question screen
-- Add UDP: on_timer_tick, on_answer_count, send_ping (Task 6)
+GameClient is the networking layer used by PlayerGUI. It:
+- Opens a TCP connection and sends JOIN / ANSWER messages
+- Runs a background _recv_loop thread that reads all server→client messages
+- Routes each message to a typed on_* handler
+- Exposes on_lobby_update, on_error, on_disconnect as overridable no-ops;
+  PlayerGUI monkey-patches these after construction to update the GUI
+- on_game_start, on_question, on_question_result, on_game_over, and
+  on_player_disconnected are fully implemented and drive the PlayerGUI screens
 
 Threading model
 ---------------

@@ -1,33 +1,26 @@
-"""server.py — TCP game server for BrainZap Trivia.
+"""server.py — TCP + UDP game server for BrainZap Trivia.
 
 CMPT 371 A3: BrainZap - Trivia Game
 Architecture: Client-Server, TCP + UDP hybrid
-Reference:    reference/protocol-foundation.md
-Ownership:    Sanchit (Phase 2: Task 3 TCP skeleton; Phase 4: Task 5 Server UDP + Task 14 Host GUI)
-              Praneet (Phase 4: Task 8 game loop — will extend this file)
 
-Phase 2 scope
--------------
-- Generate session code on startup
-- Accept TCP connections (acceptor thread)
-- Spawn a per-client reader thread for each connection
-- Validate join requests (session code, display name uniqueness, capacity)
-- Maintain lobby state (_joined dict)
-- Broadcast lobby_update to all joined clients on any change
-- Clean up on disconnect (lobby phase)
-
-Phase 4 additions (complete)
------------------------------
-- UDP networking: ping/pong registration, timer ticks, answer counts
-- ANSWER dispatch → answer queue stamped with time.monotonic() receive time
-- send_to() for personalised per-player TCP messages
-- get_client_rtt() hook (stub; latency compensation deferred to a later task)
+GameServer manages one BrainZap session end-to-end:
+- Generates a session code on startup
+- Accepts TCP connections and validates JOIN requests (session code,
+  name uniqueness, player cap)
+- Maintains lobby state (_joined dict) and broadcasts LOBBY_UPDATE on changes
+- Dispatches ANSWER messages into an answer queue consumed by GameLoop
+- Sends PLAYER_DISCONNECTED to remaining players when a client drops
+- Runs a UDP socket on the same port for timer ticks, answer counts, ping/pong
+- Exposes send_to() for personalised per-player messages and
+  broadcast_timer_tick() / broadcast_answer_count() for game-loop use
 
 Threading model
 ---------------
-  Main thread      : starts server; will run game loop in Phase 4
-  Acceptor thread  : accept() loop; hands each socket to a client thread (daemon)
-  Per-client thread: reads one client's messages for its entire lifetime (daemon)
+  Caller thread     : runs GameLoop (blocking) after start()
+  Acceptor thread   : accept() loop; hands each socket to a client thread
+  Per-client thread : reads one client's messages for its entire lifetime
+  UDP recv thread   : handles incoming datagrams (pings, registration)
+  UDP send thread   : drains the UdpSendQueue and calls sendto()
 
 Lock discipline
 ---------------
@@ -89,7 +82,7 @@ class GameServer:
         server = GameServer()
         server.start()
         print(f"Session code: {server.session_code}")
-        # ... main thread runs game loop in Phase 4 ...
+        # ... caller runs GameLoop here ...
         server.stop()
     """
 
@@ -432,8 +425,8 @@ class GameServer:
         with self._joined_lock:
             players = list(self._joined.keys())
 
-        # Phase 4 will set host_started_countdown / countdown_remaining when the
-        # host triggers the auto-start countdown.
+        # host_started_countdown and countdown_remaining are always False/None:
+        # the auto-start countdown is driven by GameLoop, not the server directly.
         self.broadcast(
             {
                 "type": MsgType.LOBBY_UPDATE,
@@ -453,7 +446,7 @@ class GameServer:
             )
 
     # ------------------------------------------------------------------
-    # Accessors for the game loop (Phase 4)
+    # Accessors for the game loop
     # ------------------------------------------------------------------
 
     def get_players(self) -> list[str]:
@@ -523,8 +516,8 @@ class GameServer:
     def get_client_rtt(self, display_name: str) -> float | None:
         """Return the latest client RTT estimate, if available.
 
-        Task 7 uses this as a forward-compatible latency hook. Task 5 only
-        stores raw ping metadata, so there is no usable RTT value yet.
+        Raw ping metadata is stored in _udp_ping_meta but RTT calculation and
+        latency-compensated scoring are not implemented; this always returns None.
         """
         del display_name
         return None

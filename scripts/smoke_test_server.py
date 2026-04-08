@@ -1,4 +1,4 @@
-"""Manual smoke test for server.py Phase 2 — TCP join handshake.
+"""Manual smoke test for server.py — TCP join handshake.
 
 Run the server first:
     python scripts/run_server.py [PORT]

@@ -44,40 +44,6 @@ The script will:
 
 Check [Makefile](./Makefile) for short commands to ease development.
 
-### Step 3: Start the server (host)
-
-The host launches the game server and loads a quiz file.
-
-```bash
-python main.py --host --quiz quizzes/sample.json
-```
-
-- The server will print a **session code** on startup — share this with players.
-- The host GUI will open showing the lobby and a **Start Game** button (enabled once 2+ players have joined).
-
-### Step 4: Connect as a player
-
-Each player runs the following on their machine (or in a separate terminal):
-
-```bash
-python main.py
-```
-
-- Enter the **server IP address**, the **session code**, and a **display name** in the GUI.
-- Wait in the lobby until the host starts the game.
-
-> **Running locally (same machine):** Use `127.0.0.1` as the server IP. Open multiple terminals and run `python main.py` in each to simulate multiple players.
-
-> **Running on a LAN:** Players use the host machine's local IP (e.g. `192.168.x.x`). Find it with `ip addr` (Linux/WSL) or `ipconfig` (Windows) or `ifconfig` (macOS).
-
-### Step 5: Play
-
-Once the host clicks **Start Game**:
-1. Questions appear one at a time with a countdown timer.
-2. Players select an answer — faster correct answers score more points.
-3. After each question, the correct answer and leaderboard are shown.
-4. At the end, final rankings and stats are displayed.
-
 ---
 
 ## Running Tests
