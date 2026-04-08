@@ -309,6 +309,9 @@ class GameServer:
         )
         self._clear_udp_registration(client.display_name)
         self._broadcast_lobby_update()
+        self.broadcast(
+            {"type": MsgType.PLAYER_DISCONNECTED, "display_name": client.display_name}
+        )
 
     def _handle_answer(self, client: _ClientConn, msg: dict) -> None:
         """Enqueue a player's answer with a server-stamped receive time.
