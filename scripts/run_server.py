@@ -1,4 +1,4 @@
-"""Run the Sockit game server as a standalone process.
+"""Run the BrainZap game server as a standalone process.
 
     python scripts/run_server.py [PORT]
 

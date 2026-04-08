@@ -6,7 +6,7 @@
 
 ## Overview
 
-`server.py` implements the TCP server for one Sockit game session. It handles everything from accepting raw connections to maintaining lobby state and broadcasting updates. Game logic (question sequencing, scoring) is not here yet — that arrives in Phase 4.
+`server.py` implements the TCP server for one BrainZap game session. It handles everything from accepting raw connections to maintaining lobby state and broadcasting updates. Game logic (question sequencing, scoring) is not here yet — that arrives in Phase 4.
 
 **Current scope (Phase 2 — Task 3):** session code, join handshake, lobby state, disconnect.
 

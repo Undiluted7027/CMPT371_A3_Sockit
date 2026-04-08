@@ -1,4 +1,4 @@
-"""Scoring engine and player-stat tracking for Sockit Trivia."""
+"""Scoring engine and player-stat tracking for BrainZap Trivia."""
 
 import math
 from dataclasses import asdict, dataclass

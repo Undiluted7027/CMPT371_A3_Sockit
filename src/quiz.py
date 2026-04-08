@@ -1,4 +1,4 @@
-"""Quiz loading and validation utilities for Sockit Trivia."""
+"""Quiz loading and validation utilities for BrainZap Trivia."""
 
 import json
 

@@ -1,4 +1,4 @@
-"""Project entry point for launching the Sockit host application."""
+"""Project entry point for launching the BrainZap host application."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 def build_parser() -> argparse.ArgumentParser:
     """Create the CLI parser for the current host-launch entry point."""
-    parser = argparse.ArgumentParser(description="Sockit Trivia")
+    parser = argparse.ArgumentParser(description="BrainZap Trivia")
     subparsers = parser.add_subparsers(dest="mode")
 
     host_parser = subparsers.add_parser("host", help="Launch the host GUI")

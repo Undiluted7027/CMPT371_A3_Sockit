@@ -1,4 +1,4 @@
-"""Tkinter host GUI for launching and monitoring a Sockit game session."""
+"""Tkinter host GUI for launching and monitoring a BrainZap game session."""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ class HostGUI(HostObserver):
         self.answered_var = tk.StringVar(value="Answered: 0 / 0")
         self.result_var = tk.StringVar(value="")
 
-        self.root.title("Sockit Host")
+        self.root.title("BrainZap Host")
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
 
         self._build_ui()
