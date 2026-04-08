@@ -17,7 +17,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: uv run mypy
+        entry: .venv/bin/mypy
         language: system
         pass_filenames: false
-        args: [src, tests]
+        args: [src, tests, scripts]
